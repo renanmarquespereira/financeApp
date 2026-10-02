@@ -100,7 +100,7 @@ interface FinanceApi {
         @Body body: com.google.gson.JsonObject,
         @Header("X-Workspace-Id") workspaceId: String = WorkspaceOperation.current().workspaceId,
         @Header("Authorization") authorization: String = WorkspaceOperation.current().authorization
-    ): Map<String, Int>
+    ): com.google.gson.JsonObject
 
     @POST("auth/login")
     suspend fun login(@Body request: LoginRequest): TokenResponse

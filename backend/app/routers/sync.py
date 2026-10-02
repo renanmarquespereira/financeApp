@@ -245,6 +245,15 @@ def import_local_snapshot(payload: dict, db: Session = Depends(get_db), user: Us
         "created": created,
         "matched_or_ignored": ignored_or_matched,
         "server_counts_after": server_counts,
+        # Local Android IDs can come from an older/offline database. Returning
+        # the authoritative server IDs lets the client remap pending rows before
+        # it posts them through the normal endpoints.
+        "id_mappings": {
+            "accounts": {str(k): v for k, v in local_to_account.items() if k is not None},
+            "categories": {str(k): v for k, v in local_to_category.items() if k is not None},
+            "cards": {str(k): v for k, v in local_to_card.items() if k is not None},
+            "goals": {str(k): v for k, v in local_to_goal.items() if k is not None},
+        },
     }
     logger.warning("SYNC_IMPORT_LOCAL_RESULT %s", diagnostic)
     return diagnostic

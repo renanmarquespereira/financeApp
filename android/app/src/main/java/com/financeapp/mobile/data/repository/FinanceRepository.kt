@@ -999,17 +999,42 @@ class FinanceRepository @Inject constructor(
             contributions = dao.backupGoalContributions().filter { it.syncState == "SYNCED" }
         )
         val json = gson.toJsonTree(payload).asJsonObject
-        api.importLocalSnapshot(json)
+        val result = api.importLocalSnapshot(json)
+
+        // O banco novo pode atribuir IDs diferentes aos registros que ja estavam
+        // marcados como SYNCED no aparelho. Remapeamos as referencias das linhas
+        // locais (inclusive PENDING_CREATE) antes de continuar a fila normal.
+        val mappings = result.getAsJsonObject("id_mappings")
+        fun remaps(name: String): List<Pair<Int, Int>> {
+            val obj = mappings?.getAsJsonObject(name) ?: return emptyList()
+            return obj.entrySet().mapNotNull { (localId, value) ->
+                val oldId = localId.toIntOrNull() ?: return@mapNotNull null
+                val newId = runCatching { value.asInt }.getOrNull() ?: return@mapNotNull null
+                oldId to newId
+            }
+        }
+        remaps("accounts").forEach { (oldId, newId) ->
+            if (oldId != newId) dao.remapTransactionAccount(oldId, newId)
+        }
+        remaps("categories").forEach { (oldId, newId) ->
+            if (oldId != newId) dao.remapTransactionCategory(oldId, newId)
+        }
+        remaps("cards").forEach { (oldId, newId) ->
+            if (oldId != newId) dao.remapTransactionCard(oldId, newId)
+        }
     }
 
     suspend fun syncPendingNow(): Unit = withWorkspace {
         if (WorkspaceOperation.current().userId == 0) return@withWorkspace
 
-        // A migracao de linhas legadas e uma ponte de versoes antigas, nao faz
-        // parte da sincronizacao normal. O endpoint /sync/import-local devolve um
-        // diagnostico estruturado e, alem disso, reenviar todo o banco local em
-        // cada tentativa pode bloquear a fila PENDING_* antes que UPDATE/DELETE
-        // cheguem ao servidor. A sincronizacao corrente usa somente a fila abaixo.
+        // Primeiro reconcilia os dados legados que ja estavam marcados como
+        // SYNCED no aparelho. Isso e essencial na primeira conexao com um banco
+        // de nuvem novo, antes de enviar transacoes PENDING_CREATE.
+        migrateLegacySyncedLocalRows()
+
+        // Depois da reconciliacao idempotente acima, a fila PENDING_* segue na
+        // ordem normal. O servidor devolve os IDs definitivos para que nenhuma
+        // transacao seja enviada apontando para conta/cartao/categoria inexistente.
         var remoteWorkspaces = api.workspaces()
         var remoteWorkspace = remoteWorkspaces.firstOrNull { it.id == WorkspaceOperation.current().workspaceId }
         if (remoteWorkspace == null) {
