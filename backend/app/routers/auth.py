@@ -209,121 +209,79 @@ def register(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    # Beta/test mode: registration is completed immediately.
+    # E-mail verification routes are intentionally kept in place so the
+    # verification flow can be re-enabled later without a database migration.
     if not data.legal_accepted:
         raise HTTPException(status_code=400, detail="É necessário aceitar os Termos de Uso e a Política de Privacidade")
 
-    email = (
-        str(data.email)
-        .strip()
-        .lower()
-    )
+    email = str(data.email).strip().lower()
 
-    existing = (
-        db.query(User)
-        .filter(User.email == email)
-        .first()
-    )
+    existing = db.query(User).filter(User.email == email).first()
+    if existing and existing.password_hash:
+        raise HTTPException(status_code=409, detail="E-mail já cadastrado")
 
-    if (
-        existing
-        and existing.password_hash
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="E-mail já cadastrado",
-        )
+    existing_cpf = db.query(User).filter(User.cpf == data.cpf).first()
+    if existing_cpf and (not existing or existing_cpf.id != existing.id):
+        raise HTTPException(status_code=409, detail="CPF já cadastrado em outra conta")
 
-    existing_cpf = (
-        db.query(User)
-        .filter(User.cpf == data.cpf)
-        .first()
-    )
-
-    if (
-        existing_cpf
-        and (
-            not existing
-            or existing_cpf.id != existing.id
-        )
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="CPF já cadastrado em outra conta",
-        )
-
+    # A previous attempt may have been left pending while SMTP was unavailable.
+    # If this is the same e-mail, discard that pending record and complete the
+    # account directly. A pending CPF belonging to another e-mail remains a
+    # conflict to avoid duplicate registrations.
     pending_cpf = (
         db.query(PendingRegistration)
         .filter(
-            PendingRegistration.cpf ==
-                data.cpf,
-            PendingRegistration.email !=
-                email,
+            PendingRegistration.cpf == data.cpf,
+            PendingRegistration.email != email,
         )
         .first()
     )
-
     if pending_cpf:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "CPF já está sendo usado "
-                "em outro cadastro."
-            ),
-        )
+        raise HTTPException(status_code=409, detail="CPF já está sendo usado em outro cadastro.")
 
     pending = (
         db.query(PendingRegistration)
-        .filter(
-            PendingRegistration.email ==
-                email
-        )
+        .filter(PendingRegistration.email == email)
         .first()
     )
+    if pending:
+        db.delete(pending)
 
-    if pending is None:
-        pending = PendingRegistration(
+    accepted_at = datetime.now(timezone.utc)
+    if existing:
+        existing.name = data.name.strip()
+        existing.cpf = data.cpf
+        existing.password_hash = hash_password(data.password)
+        existing.birth_date = data.birth_date
+        existing.sex = data.sex
+        existing.terms_version = data.terms_version
+        existing.privacy_version = data.privacy_version
+        existing.legal_accepted_at = accepted_at
+        user = existing
+    else:
+        user = User(
             email=email,
             name=data.name.strip(),
             cpf=data.cpf,
-            password_hash=
-                hash_password(data.password),
+            password_hash=hash_password(data.password),
             birth_date=data.birth_date,
             sex=data.sex,
             terms_version=data.terms_version,
             privacy_version=data.privacy_version,
-            legal_accepted_at=datetime.now(timezone.utc),
-            code_hash="",
-            attempts=0,
-            expires_at=
-                datetime.now(timezone.utc),
+            legal_accepted_at=accepted_at,
         )
-        db.add(pending)
-        db.flush()
-    else:
-        pending.name = data.name.strip()
-        pending.cpf = data.cpf
-        pending.password_hash = (
-            hash_password(data.password)
-        )
-        pending.birth_date = (
-            data.birth_date
-        )
-        pending.sex = data.sex
-        pending.terms_version = data.terms_version
-        pending.privacy_version = data.privacy_version
-        pending.legal_accepted_at = datetime.now(timezone.utc)
+        db.add(user)
 
-    _send_pending_registration_link(
-        pending,
-        db,
-        request,
-    )
+    db.commit()
+    db.refresh(user)
 
     return {
-        "status": "verification_required",
+        "status": "registered",
         "email": email,
-        "expires_in_seconds": 86400,
+        "expires_in_seconds": 0,
         "max_attempts": 0,
+        "message": "Cadastro concluído. Você já pode entrar.",
     }
 
 
@@ -496,14 +454,10 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             pending.password_hash,
         )
     ):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "E-mail não confirmado. "
-                "Por favor, confirme seu e-mail "
-                "para acessar."
-            ),
-        )
+        # Beta/test mode migration: accounts left pending by the old e-mail
+        # verification flow are promoted automatically on the next valid login.
+        user = _complete_pending_registration(pending, db)
+        return tokens(user)
 
     user = db.query(User).filter(User.email == email).first()
 

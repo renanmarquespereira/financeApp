@@ -141,24 +141,26 @@ class AuthViewModel @Inject constructor(
                 )
 
             try {
-                val verificationEmail =
-                    repository.register(
-                        name = name.trim(),
-                        cpf = cpf,
-                        email = email.trim(),
-                        password = password,
-                        birthDate = birthDate,
-                        sex = sex
-                    )
+                repository.register(
+                    name = name.trim(),
+                    cpf = cpf,
+                    email = email.trim(),
+                    password = password,
+                    birthDate = birthDate,
+                    sex = sex
+                )
 
-                _state.value =
-                    _state.value.copy(
-                        loading = false,
-                        awaitingEmailVerification =
-                            true,
-                        verificationEmail =
-                            verificationEmail
-                    )
+                // Beta/test mode: cadastro já é efetivado no servidor.
+                // Faz o primeiro login imediatamente, sem etapa de e-mail.
+                repository.login(
+                    email.trim(),
+                    password
+                )
+
+                _state.value = AuthUiState(
+                    authenticated = true,
+                    biometricQuickLoginAvailable = true
+                )
             } catch (e: Exception) {
                 _state.value =
                     _state.value.copy(
