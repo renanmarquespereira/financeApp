@@ -1,0 +1,4 @@
+O projeto foi preparado para Android Studio Quail 3 e Gradle 9.5.
+Abra a pasta no Android Studio e faça o Gradle Sync.
+Se desejar usar ./gradlew fora do Android Studio, gere o wrapper pelo IDE/Gradle:
+gradle wrapper --gradle-version 9.5.0

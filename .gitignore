@@ -1,0 +1,68 @@
+﻿# ==============================
+# FinanceApp - arquivos privados
+# ==============================
+
+# Variaveis de ambiente / segredos
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Chaves / certificados
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+key.properties
+**/key.properties
+
+# Python / FastAPI
+.venv/
+venv/
+**/.venv/
+**/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# Flutter / Dart
+.dart_tool/
+**/.dart_tool/
+build/
+**/build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# Android
+android/local.properties
+**/android/local.properties
+.gradle/
+**/.gradle/
+*.apk
+*.aab
+
+# IDE
+.idea/
+**/.idea/
+.vscode/
+*.iml
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporarios
+*.tmp
+*.bak
+
+# Backups e atalhos locais
+*.lnk
+*.backup-*

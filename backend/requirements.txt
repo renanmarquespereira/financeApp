@@ -1,0 +1,17 @@
+fastapi==0.141.1
+uvicorn==0.52.0
+SQLAlchemy==2.0.52
+psycopg[binary]
+pydantic==2.13.4
+pydantic-settings
+python-dotenv
+python-jose[cryptography]
+google-auth
+pwdlib[argon2]
+python-multipart
+email-validator
+celery==5.5.3
+redis==6.4.0
+httpx>=0.27,<1.0
+
+requests>=2.32.0

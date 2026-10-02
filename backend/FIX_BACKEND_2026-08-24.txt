@@ -1,0 +1,11 @@
+CORRECOES APLICADAS
+1. Criado app/routers/categories.py, que era importado por app/main.py mas estava ausente.
+2. API ganhou healthcheck no docker-compose.
+3. worker e beat agora aguardam a API ficar saudavel antes de iniciar.
+4. Isso garante que Base.metadata.create_all() crie as tabelas antes de o Celery consulta-las.
+
+PARA SUBIR SEM APAGAR O BANCO:
+docker compose down
+docker compose up --build
+
+NAO use docker compose down -v, pois -v apaga os dados do PostgreSQL.
