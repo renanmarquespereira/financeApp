@@ -66,3 +66,5 @@ Thumbs.db
 # Backups e atalhos locais
 *.lnk
 *.backup-*
+
+_backup_patch_*/
