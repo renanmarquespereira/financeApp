@@ -106,7 +106,7 @@ class _TransactionsViewState extends State<TransactionsView> {
       if(d==null)return false;
       if(q.isEmpty&&(d.year!=selectedMonth.year || d.month!=selectedMonth.month))return false;
       if(view=='expenses'&&t.isCard&&t.source!='card_payment')return false;
-      if(view=='cards'&&(!t.isCard || t.cardId!=cardId))return false;
+      if(view=='cards'&&(t.description.startsWith('Prevista • Dívida • ') || !t.isCard || t.cardId!=cardId))return false;
       if(source=='manual'&&t.source!='manual'||source=='open_finance'&&t.source!='open_finance')return false;
       if(type=='income'&&t.type!='income'||type=='expense'&&t.type=='income')return false;
       final a=t.amount.abs(); if(amount=='100'&&a>100||amount=='100_500'&&(a<=100||a>500)||amount=='500_1000'&&(a<=500||a>1000)||amount=='1000'&&a<=1000)return false;
@@ -131,6 +131,22 @@ class _TransactionsViewState extends State<TransactionsView> {
       if(hasFilters)SizedBox(height:42,child:ListView(scrollDirection:Axis.horizontal,padding:const EdgeInsets.symmetric(horizontal:12),children:[Padding(padding:const EdgeInsets.only(right:6),child:ActionChip(avatar:const Icon(Icons.filter_alt_outlined,size:16),label:const Text('Filtros aplicados'),onPressed:_filters)),...filterLabels.map((e)=>Padding(padding:const EdgeInsets.only(right:6),child:Chip(label:Text(e)))),OutlinedButton.icon(style:OutlinedButton.styleFrom(foregroundColor:Theme.of(context).colorScheme.error,side:BorderSide(color:Theme.of(context).colorScheme.error)),onPressed:clearFilters,icon:const Icon(Icons.filter_alt_off,size:16),label:const Text('Limpar filtros'))])),
       Padding(padding:const EdgeInsets.symmetric(horizontal:12),child:Row(children:[Expanded(child:ChoiceChip(label:const Center(child:Text('Despesas')),selected:view=='expenses',onSelected:(_)=>setState(()=>view='expenses'))),const SizedBox(width:8),Expanded(child:ChoiceChip(label:const Center(child:Text('Cartões')),selected:view=='cards',onSelected:(_)=>setState((){view='cards';if(cards.isNotEmpty)cardId??=cards.first.id;})))])),
       Padding(padding:const EdgeInsets.fromLTRB(12,10,12,6),child:Row(children:[IconButton(onPressed:()=>moveMonth(-1),icon:const Icon(Icons.chevron_left)),Expanded(child:Column(children:[Text(const ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'][selectedMonth.month-1],textAlign:TextAlign.center,style:Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight:FontWeight.w800,letterSpacing:.8)),Text('${selectedMonth.year}',style:Theme.of(context).textTheme.bodySmall)])),IconButton(onPressed:()=>moveMonth(1),icon:const Icon(Icons.chevron_right))])),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12,0,12,8),
+        child: Card(
+          margin: EdgeInsets.zero,
+          child: ListTile(
+            leading: const Icon(Icons.calendar_month),
+            title: Text(
+              selectedMonth.year==DateTime.now().year && selectedMonth.month==DateTime.now().month
+                  ? 'Movimentação do mês vigente • ${selectedMonth.year}'
+                  : 'Movimentação de ${monthLabel(selectedMonth)}',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            subtitle: Text('Período exibido: ${monthLabel(selectedMonth)}'),
+          ),
+        ),
+      ),
       if(view=='cards'&&cards.isNotEmpty)Padding(padding:const EdgeInsets.fromLTRB(12,0,12,6),child:DropdownButtonFormField<int>(value:cardId,decoration:const InputDecoration(labelText:'Cartão',border:OutlineInputBorder()),items:cards.map((c)=>DropdownMenuItem(value:c.id,child:Text('${c.nickname?.isNotEmpty==true?c.nickname!:c.bankName} • ${c.brand} • final ${c.lastFour}'))).toList(),onChanged:(v)=>setState(()=>cardId=v))),
       Expanded(child:view=='cards'&&cards.isEmpty?_noCards(context):items.isEmpty?Center(child:Text(view=='cards'?'Nenhuma transação deste cartão em ${monthLabel(selectedMonth)}.':'Nenhuma transação em ${monthLabel(selectedMonth)}.')):ListView.builder(padding:const EdgeInsets.fromLTRB(12,10,12,90),itemCount:items.length,itemBuilder:(c,i)=>Padding(padding:const EdgeInsets.only(bottom:10),child:_transactionCard(context,items[i])))),
     ]);

@@ -1957,7 +1957,7 @@ fun HomeScreen(
                     VoiceTransactionParser.toIsoDateTime(confirmed.date),
                     if (isCard) confirmed.cardId else null,
                     if (isCard) confirmed.installmentCount.coerceIn(1, 360) else 1,
-                    if (isCard) VoiceTransactionParser.toIsoDateTime(confirmed.firstChargeDate ?: confirmed.date.plusMonths(1)) else null
+                    if (isCard) VoiceTransactionParser.toIsoDateTime(confirmed.date) else null
                 ) { success ->
                     done(success)
                     if (success) {
@@ -1982,7 +1982,8 @@ fun HomeScreen(
         onLoadForecastState = onLoadForecastState,
         onSaveForecastState = onSaveForecastState,
         onCreateManual = onCreateManual,
-        onUpdateManualTransaction = onUpdateManualTransaction
+        onUpdateManualTransaction = onUpdateManualTransaction,
+        onDeleteTransaction = onDeleteTransaction
     )
 
     if (showTransactionTypeDialog) {

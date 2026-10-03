@@ -2,12 +2,15 @@ package com.financeapp.mobile.ui.home
 
 import android.content.Context
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -185,7 +188,8 @@ internal fun DebtCenterFlow(
     onLoadForecastState: suspend () -> Map<String, Any?>,
     onSaveForecastState: suspend (Map<String, Any?>) -> Map<String, Any?>,
     onCreateManual: (Int?, Int?, String, Double, String, String, Int?, Int, String?, (Boolean) -> Unit) -> Unit,
-    onUpdateManualTransaction: (Int, Int?, Int?, String, Double, String, String) -> Unit
+    onUpdateManualTransaction: (Int, Int?, Int?, String, Double, String, String) -> Unit,
+    onDeleteTransaction: (TransactionEntity) -> Unit
 ) {
     if (!visible && !openNewDirectly) return
     val context = LocalContext.current
@@ -193,6 +197,7 @@ internal fun DebtCenterFlow(
     var debts by remember(userKey, workspaceId) { mutableStateOf(loadCenterDebts(context, userKey, workspaceId)) }
     var deletedIds by remember(userKey, workspaceId) { mutableStateOf(loadCenterDeleted(context, userKey, workspaceId)) }
     var showNew by remember(openNewDirectly) { mutableStateOf(openNewDirectly) }
+    var editing by remember { mutableStateOf<DebtCenterRecord?>(null) }
     var paying by remember { mutableStateOf<DebtCenterRecord?>(null) }
     val money = remember { NumberFormat.getCurrencyInstance(Locale("pt", "BR")) }
     val df = remember { DateTimeFormatter.ofPattern("dd/MM/yyyy") }
@@ -273,6 +278,9 @@ internal fun DebtCenterFlow(
                                         }
                                     }
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                        TextButton(onClick = { editing = d }) {
+                                            Icon(Icons.Default.Edit, null); Spacer(Modifier.width(4.dp)); Text("Editar")
+                                        }
                                         TextButton(onClick = {
                                             val del = deletedIds + d.id
                                             persist(debts.filterNot { it.id == d.id }, del)
@@ -292,51 +300,190 @@ internal fun DebtCenterFlow(
         )
     }
 
-    if (showNew) {
-        var name by remember { mutableStateOf("") }
-        var creditor by remember { mutableStateOf("") }
-        var installmentDigits by remember { mutableStateOf("") }
-        var countText by remember { mutableStateOf("12") }
-        var firstDue by remember { mutableStateOf(LocalDate.now().plusMonths(1)) }
-        var pickDate by remember { mutableStateOf(false) }
-        val count = countText.filter(Char::isDigit).toIntOrNull()?.coerceIn(1, 360) ?: 0
-        val installment = BrlMoney.toDouble(installmentDigits)
-        val total = installment * count
+    if (showNew || editing != null) {
+        val existing = editing
+        val dialogKey = existing?.id ?: -1L
+        val paidAmount = existing?.paid ?: 0.0
+        val paidInstallments = existing?.paidInstallments ?: 0
+        var name by remember(dialogKey) { mutableStateOf(existing?.name.orEmpty()) }
+        var creditor by remember(dialogKey) { mutableStateOf(existing?.creditor.orEmpty()) }
+        var calculateFromTotal by remember(dialogKey) { mutableStateOf(existing != null) }
+        var totalDigits by remember(dialogKey) {
+            mutableStateOf(existing?.originalAmount?.let { (it * 100).toLong().toString() }.orEmpty())
+        }
+        var installmentDigits by remember(dialogKey) {
+            mutableStateOf(existing?.installmentAmount?.let { (it * 100).toLong().toString() }.orEmpty())
+        }
+        var countText by remember(dialogKey) { mutableStateOf((existing?.installmentCount ?: 12).toString()) }
+        var dueInput by remember(dialogKey) {
+            mutableStateOf(existing?.nextDueDate ?: LocalDate.now().plusMonths(1))
+        }
+        var pickDate by remember(dialogKey) { mutableStateOf(false) }
+
+        val requestedCount = countText.filter(Char::isDigit).toIntOrNull()?.coerceIn(1, 360) ?: 0
+        val minCount = if (existing == null) 1 else paidInstallments + if (existing.remaining > 0.009) 1 else 0
+        val count = requestedCount.coerceAtLeast(0)
+        val remainingCount = (count - paidInstallments).coerceAtLeast(0)
+        val typedTotal = BrlMoney.toDouble(totalDigits)
+        val typedInstallment = BrlMoney.toDouble(installmentDigits)
+        val total = if (calculateFromTotal) typedTotal else paidAmount + typedInstallment * remainingCount
+        val installment = if (calculateFromTotal) {
+            if (remainingCount > 0) ((total - paidAmount).coerceAtLeast(0.0) / remainingCount) else 0.0
+        } else typedInstallment
+        val firstDue = if (existing == null) dueInput else dueInput.minusMonths(paidInstallments.toLong())
+        val valid = name.isNotBlank() && count >= minCount && total + 0.009 >= paidAmount &&
+            ((remainingCount == 0 && kotlin.math.abs(total - paidAmount) < 0.01) || (remainingCount > 0 && installment > 0.0))
+
         AlertDialog(
-            onDismissRequest = { showNew = false; onNewConsumed() },
-            title = { Text("Adicionar dívida") },
+            onDismissRequest = {
+                showNew = false
+                editing = null
+                onNewConsumed()
+            },
+            title = { Text(if (existing == null) "Adicionar dívida" else "Editar dívida") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     OutlinedTextField(name, { name = it }, label = { Text("Nome da dívida *") }, singleLine = true)
                     OutlinedTextField(creditor, { creditor = it }, label = { Text("Credor") }, singleLine = true)
-                    OutlinedTextField(installmentDigits, { installmentDigits = BrlMoney.digits(it) }, label = { Text("Valor da parcela *") }, visualTransformation = BrlMoneyVisualTransformation, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                    OutlinedTextField(countText, { countText = it.filter(Char::isDigit).take(3) }, label = { Text("Quantidade de parcelas *") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium) {
-                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                            Text("Total da dívida", style = MaterialTheme.typography.labelMedium)
-                            Text(money.format(total), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = calculateFromTotal, onCheckedChange = { calculateFromTotal = it })
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text("Informar valor total", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (calculateFromTotal) "O valor da parcela é calculado automaticamente" else "O total é calculado pelo valor e quantidade de parcelas",
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                     }
-                    OutlinedButton(onClick = { pickDate = true }, modifier = Modifier.fillMaxWidth()) { Text("Primeiro vencimento: ${firstDue.format(df)}") }
+
+                    if (calculateFromTotal) {
+                        OutlinedTextField(
+                            totalDigits,
+                            { totalDigits = BrlMoney.digits(it) },
+                            label = { Text("Valor total da dívida *") },
+                            visualTransformation = BrlMoneyVisualTransformation,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true
+                        )
+                    } else {
+                        OutlinedTextField(
+                            installmentDigits,
+                            { installmentDigits = BrlMoney.digits(it) },
+                            label = { Text("Valor da parcela *") },
+                            visualTransformation = BrlMoneyVisualTransformation,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true
+                        )
+                    }
+
+                    OutlinedTextField(
+                        countText,
+                        { countText = it.filter(Char::isDigit).take(3) },
+                        label = { Text("Quantidade de parcelas *") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+
+                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Resumo do acordo", style = MaterialTheme.typography.labelMedium)
+                            Text("Total: ${money.format(total)}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            if (remainingCount > 0) {
+                                Text("Parcelas restantes: $remainingCount × ${money.format(installment)}")
+                            }
+                            if (paidAmount > 0) Text("Já pago: ${money.format(paidAmount)}")
+                        }
+                    }
+
+                    OutlinedButton(onClick = { pickDate = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("${if (existing == null) "Primeiro vencimento" else "Próximo vencimento"}: ${dueInput.format(df)}")
+                    }
+                    if (existing != null && existing.payments.isNotEmpty()) {
+                        Text("Os pagamentos já registrados serão preservados.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             },
             confirmButton = {
-                Button(enabled = name.isNotBlank() && installment > 0 && count > 0, onClick = {
-                    val id = System.currentTimeMillis()
-                    val debt = DebtCenterRecord(id, name.trim(), creditor.trim(), installment, count, firstDue, total, emptyList())
-                    persist(listOf(debt) + debts)
-                    onCreateManual(
-                        null, null, "$PLANNED_DEBT_PREFIX${debt.name}", -total, "debit", firstDue.toString(), null, count, firstDue.toString()
-                    ) { }
+                Button(enabled = valid, onClick = {
+                    val debt = if (existing == null) {
+                        DebtCenterRecord(System.currentTimeMillis(), name.trim(), creditor.trim(), installment, count, firstDue, total, emptyList())
+                    } else {
+                        existing.copy(
+                            name = name.trim(),
+                            creditor = creditor.trim(),
+                            installmentAmount = installment,
+                            installmentCount = count,
+                            firstDueDate = firstDue,
+                            originalAmount = total
+                        )
+                    }
+                    if (existing == null) {
+                        persist(listOf(debt) + debts)
+                        onCreateManual(
+                            null, null, "$PLANNED_DEBT_PREFIX${debt.name}${if (debt.creditor.isNotBlank()) " • Credor: ${debt.creditor}" else ""}", -total, "debit", firstDue.toString(), null, count, firstDue.toString()
+                        ) { }
+                    } else {
+                        persist(debts.map { if (it.id == existing.id) debt else it })
+                        val oldPlans = transactions.filter {
+                            isPlannedDebtTransaction(it) &&
+                                it.description.startsWith("$PLANNED_DEBT_PREFIX${existing.name}", ignoreCase = true)
+                        }
+                        oldPlans.forEach { tx ->
+                            val number = tx.installmentNumber ?: Regex("Parcela\\s+(\\d+)/", RegexOption.IGNORE_CASE)
+                                .find(tx.description)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                            if (number != null && number > debt.installmentCount) onDeleteTransaction(tx)
+                            else if (number != null && number > debt.paidInstallments) {
+                                val date = debt.firstDueDate.plusMonths((number - 1).toLong()).toString()
+                                onUpdateManualTransaction(
+                                    tx.id, tx.accountId, tx.categoryId,
+                                    "$PLANNED_DEBT_PREFIX${debt.name}${if (debt.creditor.isNotBlank()) " • Credor: ${debt.creditor}" else ""} • Parcela $number/${debt.installmentCount}",
+                                    -debt.installmentAmount, "debit", date
+                                )
+                            }
+                        }
+                        val existingNumbers = oldPlans.mapNotNull { tx ->
+                            tx.installmentNumber ?: Regex("Parcela\\s+(\\d+)/", RegexOption.IGNORE_CASE)
+                                .find(tx.description)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                        }.toSet()
+                        for (number in (debt.paidInstallments + 1)..debt.installmentCount) {
+                            if (number !in existingNumbers) {
+                                val date = debt.firstDueDate.plusMonths((number - 1).toLong()).toString()
+                                onCreateManual(
+                                    null, null,
+                                    "$PLANNED_DEBT_PREFIX${debt.name}${if (debt.creditor.isNotBlank()) " • Credor: ${debt.creditor}" else ""} • Parcela $number/${debt.installmentCount}",
+                                    -debt.installmentAmount, "debit", date, null, 1, date
+                                ) { }
+                            }
+                        }
+                    }
                     showNew = false
+                    editing = null
                     onNewConsumed()
                 }) { Text("Salvar") }
             },
-            dismissButton = { TextButton(onClick = { showNew = false; onNewConsumed() }) { Text("Cancelar") } }
+            dismissButton = {
+                TextButton(onClick = {
+                    showNew = false
+                    editing = null
+                    onNewConsumed()
+                }) { Text("Cancelar") }
+            }
         )
         if (pickDate) {
-            val state = rememberDatePickerState(initialSelectedDateMillis = firstDue.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli())
-            DatePickerDialog(onDismissRequest = { pickDate = false }, confirmButton = { TextButton(onClick = { state.selectedDateMillis?.let { firstDue = java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneOffset.UTC).toLocalDate() }; pickDate = false }) { Text("OK") } }, dismissButton = { TextButton(onClick = { pickDate = false }) { Text("Cancelar") } }) { DatePicker(state = state) }
+            val state = rememberDatePickerState(initialSelectedDateMillis = dueInput.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli())
+            DatePickerDialog(
+                onDismissRequest = { pickDate = false },
+                confirmButton = { TextButton(onClick = {
+                    state.selectedDateMillis?.let { dueInput = java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneOffset.UTC).toLocalDate() }
+                    pickDate = false
+                }) { Text("OK") } },
+                dismissButton = { TextButton(onClick = { pickDate = false }) { Text("Cancelar") } }
+            ) { DatePicker(state = state) }
         }
     }
 
@@ -357,6 +504,7 @@ internal fun DebtCenterFlow(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(debt.name, fontWeight = FontWeight.Bold)
+                    if (debt.creditor.isNotBlank()) Text("Credor: ${debt.creditor}", style = MaterialTheme.typography.bodyMedium)
                     if (remainingInstallments > 1) {
                         Text("Quantidade de parcelas: $installmentsToPay", fontWeight = FontWeight.SemiBold)
                         Slider(
@@ -399,20 +547,23 @@ internal fun DebtCenterFlow(
                     for (installmentNumber in firstInstallment..lastInstallment) {
                         val planned = transactions
                             .filter { isPlannedDebtTransaction(it) && it.description.startsWith("$PLANNED_DEBT_PREFIX${debt.name}", ignoreCase = true) }
-                            .firstOrNull { it.installmentNumber == installmentNumber }
+                            .firstOrNull {
+                                it.installmentNumber == installmentNumber ||
+                                    Regex("Parcela\\s+$installmentNumber/", RegexOption.IGNORE_CASE).containsMatchIn(it.description)
+                            }
                         val installmentValue = if (installmentNumber == lastInstallment) {
                             (paymentValue - debt.installmentAmount * (installmentsActuallyPaid - 1)).coerceAtLeast(0.0)
                         } else debt.installmentAmount
                         if (planned != null) {
                             onUpdateManualTransaction(
                                 planned.id, accountId, planned.categoryId,
-                                "Pagamento de dívida • ${debt.name} • Parcela $installmentNumber/${debt.installmentCount}",
+                                "Pagamento de dívida • ${debt.name}${if (debt.creditor.isNotBlank()) " • Credor: ${debt.creditor}" else ""} • Parcela $installmentNumber/${debt.installmentCount}",
                                 -installmentValue, "debit", payDate.toString()
                             )
                         } else {
                             onCreateManual(
                                 accountId, null,
-                                "Pagamento de dívida • ${debt.name} • Parcela $installmentNumber/${debt.installmentCount}",
+                                "Pagamento de dívida • ${debt.name}${if (debt.creditor.isNotBlank()) " • Credor: ${debt.creditor}" else ""} • Parcela $installmentNumber/${debt.installmentCount}",
                                 -installmentValue, "debit", payDate.toString(), null, 1, null
                             ) { }
                         }

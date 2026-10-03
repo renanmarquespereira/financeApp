@@ -183,6 +183,7 @@ internal fun MonthlyTransactionsScreen(
                 TransactionViewTab.EXPENSE -> tx.source != "card_purchase" && !(tx.cardId != null && tx.source != "card_payment")
 
                 TransactionViewTab.CARD ->
+                    !isPlannedDebtTransaction(tx) &&
                     tx.source != "card_payment" && (
                         tx.cardId != null ||
                             tx.installmentGroup != null
@@ -207,6 +208,7 @@ internal fun MonthlyTransactionsScreen(
                 TransactionViewTab.EXPENSE -> tx.source != "card_purchase" && !(tx.cardId != null && tx.source != "card_payment")
 
                 TransactionViewTab.CARD ->
+                    !isPlannedDebtTransaction(tx) &&
                     tx.source != "card_payment" && (
                         tx.cardId != null ||
                             tx.installmentGroup != null
@@ -734,16 +736,18 @@ internal fun MonthlyTransactionsScreen(
                 "Movimentação do período"
 
             else ->
-                "Movimentação de ${
-                    selectedMonth.month
-                        .getDisplayName(
-                            TextStyle.FULL,
-                            locale
-                        )
-                        .replaceFirstChar {
-                            it.uppercase()
-                        }
-                }"
+                if (selectedMonth == YearMonth.now()) {
+                    "Movimentação do mês vigente • ${selectedMonth.year}"
+                } else {
+                    "Movimentação de ${
+                        selectedMonth.month
+                            .getDisplayName(
+                                TextStyle.FULL,
+                                locale
+                            )
+                            .replaceFirstChar { it.uppercase() }
+                    } • ${selectedMonth.year}"
+                }
         }
 
     val budgetAlerts = remember(

@@ -129,7 +129,7 @@ internal object VoiceTransactionParser {
             paymentMethod = paymentMethod,
             cardId = if (paymentMethod == "card") inferredCardId else null,
             installmentCount = if (paymentMethod == "card") installments else 1,
-            firstChargeDate = if (paymentMethod == "card") date.plusMonths(1) else null,
+            firstChargeDate = if (paymentMethod == "card") date else null,
             cardRefund = paymentMethod == "card" && refund,
             interpretedByAi = false
         )
@@ -216,7 +216,7 @@ internal object VoiceTransactionParser {
                 paymentMethod = aiPayment,
                 cardId = if (aiPayment == "card") (findCardId(aiCard, cards) ?: fallback.cardId) else null,
                 installmentCount = if (aiPayment == "card") aiInstallments else 1,
-                firstChargeDate = if (aiPayment == "card") (fallback.firstChargeDate ?: aiDate.plusMonths(1)) else null,
+                firstChargeDate = if (aiPayment == "card") aiDate else null,
                 cardRefund = aiPayment == "card" && aiRefund,
                 interpretedByAi = true
             )
@@ -628,7 +628,7 @@ internal fun VoiceTransactionConfirmDialog(
                             paymentMethod = if (isCard) "card" else "account",
                             cardId = if (isCard) cardId else null,
                             installmentCount = if (isCard) installments else 1,
-                            firstChargeDate = if (isCard) (initial.firstChargeDate ?: initial.date.plusMonths(1)) else null,
+                            firstChargeDate = if (isCard) initial.date else null,
                             cardRefund = isCard && cardRefund
                         )
                     ) { success -> saving = false; if (success) onDismiss() }

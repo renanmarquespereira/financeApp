@@ -11,7 +11,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Event
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -545,15 +544,7 @@ internal fun ManualTransactionDialog(
     var selectedDate by remember(initialDate) {
         mutableStateOf(initialDate ?: LocalDate.now())
     }
-    var firstChargeDate by remember {
-        mutableStateOf(
-            LocalDate.now().plusMonths(1)
-        )
-    }
     var showDatePicker by remember {
-        mutableStateOf(false)
-    }
-    var showFirstChargePicker by remember {
         mutableStateOf(false)
     }
     var installmentCount by remember { mutableStateOf(1) }
@@ -628,18 +619,9 @@ internal fun ManualTransactionDialog(
                             .toOffsetDateTime()
                             .toString()
 
-                    val chargeIso =
-                        if (
-                            selectedCardId != null
-                        ) {
-                            firstChargeDate
-                                .atTime(currentTime)
-                                .atZone(localZone)
-                                .toOffsetDateTime()
-                                .toString()
-                        } else {
-                            purchaseIso
-                        }
+                    // A fatura e definida automaticamente pela data da compra
+                    // e pelo dia de fechamento configurado no cartao.
+                    val chargeIso = purchaseIso
 
                     onSave(
                         selectedAccountId,
@@ -651,7 +633,7 @@ internal fun ManualTransactionDialog(
                         selectedCardId,
                         installmentCount,
                         chargeIso,
-                        if (recurringExpense && selectedCardId == null && effectiveType == "debit") recurringMonths else 1
+                        if (recurringExpense && effectiveType == "debit") recurringMonths else 1
                     ) { success ->
                         saving = false
                         if (success) {
@@ -980,16 +962,42 @@ internal fun ManualTransactionDialog(
                     )
                 }
 
-                if (!forceCardPurchase && selectedCardId == null && type == "debit") {
+                if (type == "debit") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = recurringExpense, onCheckedChange = { recurringExpense = it })
+                        Checkbox(
+                            checked = recurringExpense,
+                            onCheckedChange = { enabled ->
+                                recurringExpense = enabled
+                                if (enabled && selectedCardId != null) {
+                                    installmentCount = 1
+                                    customInstallments = false
+                                    customInstallmentText = ""
+                                }
+                            }
+                        )
                         Column {
-                            Text("Despesa recorrente", fontWeight = FontWeight.SemiBold)
-                            Text("Repete este lançamento mensalmente", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                if (selectedCardId != null || forceCardPurchase)
+                                    "Despesa recorrente no cartão"
+                                else
+                                    "Despesa recorrente",
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                if (selectedCardId != null || forceCardPurchase)
+                                    "Cria uma nova compra mensal neste cartão"
+                                else
+                                    "Repete este lançamento mensalmente",
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                     }
                     if (recurringExpense) {
-                        Text("Repetir por $recurringMonths meses", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Repetir por $recurringMonths meses",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
                         Slider(
                             value = recurringMonths.toFloat(),
                             onValueChange = { recurringMonths = it.toInt().coerceIn(2, 60) },
@@ -1001,7 +1009,8 @@ internal fun ManualTransactionDialog(
 
                 if (
                     selectedCardId != null &&
-                    type == "debit"
+                    type == "debit" &&
+                    !recurringExpense
                 ) {
                     Text(
                         if (installmentCount == 1) "Parcelas: à vista / 1x" else "Parcelas: ${installmentCount}x",
@@ -1039,40 +1048,6 @@ internal fun ManualTransactionDialog(
                             placeholder = { Text("Ex.: 60") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            showFirstChargePicker =
-                                true
-                        },
-                        modifier =
-                            Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            Icons.Default.Event,
-                            contentDescription = null
-                        )
-                        Spacer(
-                            Modifier.width(8.dp)
-                        )
-                        Text(
-                            if (installmentCount > 1) {
-                                "1ª cobrança: ${
-                                    firstChargeDate
-                                        .format(
-                                            dateFormatter
-                                        )
-                                }"
-                            } else {
-                                "Cobrança: ${
-                                    firstChargeDate
-                                        .format(
-                                            dateFormatter
-                                        )
-                                }"
-                            }
                         )
                     }
 
@@ -1178,16 +1153,6 @@ internal fun ManualTransactionDialog(
                                         .atZone(zone)
                                         .toLocalDate()
 
-                                if (
-                                    !firstChargeDate
-                                        .isAfter(
-                                            selectedDate
-                                        )
-                                ) {
-                                    firstChargeDate =
-                                        selectedDate
-                                            .plusMonths(1)
-                                }
                             }
 
                         showDatePicker = false
@@ -1200,58 +1165,6 @@ internal fun ManualTransactionDialog(
                 TextButton(
                     onClick = {
                         showDatePicker = false
-                    }
-                ) {
-                    Text("Cancelar")
-                }
-            }
-        ) {
-            DatePicker(
-                state = pickerState
-            )
-        }
-    }
-
-    if (showFirstChargePicker) {
-        val zone = ZoneOffset.UTC
-        val pickerState =
-            rememberDatePickerState(
-                initialSelectedDateMillis =
-                    firstChargeDate
-                        .atStartOfDay(zone)
-                        .toInstant()
-                        .toEpochMilli()
-            )
-
-        DatePickerDialog(
-            onDismissRequest = {
-                showFirstChargePicker = false
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pickerState
-                            .selectedDateMillis
-                            ?.let {
-                                firstChargeDate =
-                                    Instant
-                                        .ofEpochMilli(
-                                            it
-                                        )
-                                        .atZone(zone)
-                                        .toLocalDate()
-                            }
-
-                        showFirstChargePicker = false
-                    }
-                ) {
-                    Text("OK")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showFirstChargePicker = false
                     }
                 ) {
                     Text("Cancelar")
