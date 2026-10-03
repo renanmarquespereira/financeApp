@@ -37,6 +37,37 @@ internal const val PLANNED_DEBT_PREFIX = "Prevista • Dívida • "
 internal fun isPlannedDebtTransaction(tx: TransactionEntity): Boolean =
     tx.description.startsWith(PLANNED_DEBT_PREFIX, ignoreCase = true)
 
+private fun debtNameFromDescription(description: String): String? {
+    val body = when {
+        description.startsWith(PLANNED_DEBT_PREFIX, ignoreCase = true) ->
+            description.substring(PLANNED_DEBT_PREFIX.length)
+        description.startsWith("Pagamento de dívida •", ignoreCase = true) ->
+            description.substringAfter('•')
+        else -> return null
+    }.trim()
+    return body
+        .substringBefore(" • Credor:", missingDelimiterValue = body)
+        .substringBefore(" • Parcela", missingDelimiterValue = body)
+        .trim()
+        .takeIf { it.isNotBlank() }
+}
+
+private fun debtCreditorFromDescription(description: String): String? =
+    Regex("""•\s*Credor:\s*(.*?)\s*(?:•\s*Parcela|$)""", RegexOption.IGNORE_CASE)
+        .find(description)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+private fun debtInstallmentNumber(tx: TransactionEntity): Int? =
+    tx.installmentNumber ?: Regex("Parcela\\s+(\\d+)/", RegexOption.IGNORE_CASE)
+        .find(tx.description)?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+private fun debtInstallmentTotal(tx: TransactionEntity): Int? =
+    tx.installmentTotal ?: Regex("Parcela\\s+\\d+/(\\d+)", RegexOption.IGNORE_CASE)
+        .find(tx.description)?.groupValues?.getOrNull(1)?.toIntOrNull()
+
 internal fun debtCreditorForTransaction(
     context: Context,
     userKey: String,
@@ -44,14 +75,13 @@ internal fun debtCreditorForTransaction(
     tx: TransactionEntity
 ): String? {
     if (!isPlannedDebtTransaction(tx)) return null
-    val body = tx.description.removePrefix(PLANNED_DEBT_PREFIX)
-    val debtName = body.substringBefore(" • Parcela").trim()
-    if (debtName.isBlank()) return null
+    val debtName = debtNameFromDescription(tx.description) ?: return null
     return loadCenterDebts(context, userKey, workspaceId)
         .firstOrNull { it.name.equals(debtName, ignoreCase = true) }
         ?.creditor
         ?.trim()
         ?.takeIf { it.isNotBlank() }
+        ?: debtCreditorFromDescription(tx.description)
 }
 
 private data class DebtCenterPayment(
@@ -75,6 +105,54 @@ private data class DebtCenterRecord(
     val remaining: Double get() = (originalAmount - paid).coerceAtLeast(0.0)
     val paidInstallments: Int get() = payments.sumOf { it.installments.coerceAtLeast(1) }.coerceAtMost(installmentCount)
     val nextDueDate: LocalDate get() = firstDueDate.plusMonths(paidInstallments.toLong())
+}
+
+private fun recoverDebtRecordsFromTransactions(
+    transactions: List<TransactionEntity>,
+    existing: List<DebtCenterRecord>
+): List<DebtCenterRecord> {
+    val existingNames = existing.map { it.name.trim().lowercase(Locale("pt", "BR")) }.toSet()
+    val rows = transactions.filter {
+        isPlannedDebtTransaction(it) || it.description.startsWith("Pagamento de dívida •", ignoreCase = true)
+    }.mapNotNull { tx ->
+        debtNameFromDescription(tx.description)?.let { name -> name to tx }
+    }.groupBy({ it.first }, { it.second })
+
+    return rows.mapNotNull { (name, debtRows) ->
+        if (name.trim().lowercase(Locale("pt", "BR")) in existingNames) return@mapNotNull null
+        val totals = debtRows.mapNotNull(::debtInstallmentTotal)
+        val numbers = debtRows.mapNotNull(::debtInstallmentNumber)
+        val count = (totals + numbers).maxOrNull()?.coerceAtLeast(1) ?: debtRows.size.coerceAtLeast(1)
+        val planned = debtRows.filter(::isPlannedDebtTransaction)
+        val reference = (planned.ifEmpty { debtRows }).maxByOrNull { kotlin.math.abs(it.amount) } ?: return@mapNotNull null
+        val installmentAmount = kotlin.math.abs(reference.amount).takeIf { it > 0.0 } ?: return@mapNotNull null
+        val firstDueCandidates = debtRows.mapNotNull { tx ->
+            val date = runCatching { LocalDate.parse(tx.date.take(10)) }.getOrNull() ?: return@mapNotNull null
+            val number = debtInstallmentNumber(tx) ?: 1
+            date.minusMonths((number - 1).coerceAtLeast(0).toLong())
+        }
+        val firstDue = firstDueCandidates.minOrNull() ?: LocalDate.now().plusMonths(1)
+        val creditor = debtRows.mapNotNull { debtCreditorFromDescription(it.description) }.firstOrNull().orEmpty()
+        val payments = debtRows.filter { it.description.startsWith("Pagamento de dívida •", ignoreCase = true) }.map { tx ->
+            DebtCenterPayment(
+                amount = kotlin.math.abs(tx.amount),
+                date = runCatching { LocalDate.parse(tx.date.take(10)) }.getOrDefault(LocalDate.now()),
+                accountId = tx.accountId,
+                installments = 1
+            )
+        }
+        val stableId = -kotlin.math.abs((name.lowercase(Locale("pt", "BR")) + "|" + firstDue).hashCode().toLong()).coerceAtLeast(1L)
+        DebtCenterRecord(
+            id = stableId,
+            name = name,
+            creditor = creditor,
+            installmentAmount = installmentAmount,
+            installmentCount = count,
+            firstDueDate = firstDue,
+            originalAmount = installmentAmount * count,
+            payments = payments
+        )
+    }
 }
 
 private fun debtKey(userKey: String, workspaceId: String) = "financeapp_debts_v1_${userKey}_$workspaceId"
@@ -234,17 +312,25 @@ internal fun DebtCenterFlow(
         }
     }
 
-    LaunchedEffect(userKey, workspaceId) {
+    LaunchedEffect(userKey, workspaceId, transactions) {
         runCatching {
             val remote = onLoadForecastState()
             val remoteDeleted = (remote["deletedDebtIds"] as? List<*>)?.mapNotNull { (it as? Number)?.toLong() ?: it?.toString()?.toLongOrNull() }?.toSet() ?: emptySet()
             val allDeleted = deletedIds + remoteDeleted
             val remoteDebts = (remote["debts"] as? List<*>)?.mapNotNull { (it as? Map<*, *>)?.let(::debtFromPayload) } ?: emptyList()
-            val merged = (debts + remoteDebts).associateBy { it.id }.values.filterNot { it.id in allDeleted }.sortedByDescending { it.id }
+            val base = (debts + remoteDebts).associateBy { it.id }.values.filterNot { it.id in allDeleted }.toList()
+            val recovered = recoverDebtRecordsFromTransactions(transactions, base)
+            val merged = (base + recovered).associateBy { it.id }.values.sortedByDescending { it.id }
             debts = merged
             deletedIds = allDeleted
             saveCenterDebts(context, userKey, workspaceId, merged)
             saveCenterDeleted(context, userKey, workspaceId, allDeleted)
+            if (recovered.isNotEmpty()) {
+                val current = remote.toMutableMap()
+                current["debts"] = merged.map { it.toPayload() }
+                current["deletedDebtIds"] = allDeleted.toList()
+                onSaveForecastState(current)
+            }
         }
     }
 

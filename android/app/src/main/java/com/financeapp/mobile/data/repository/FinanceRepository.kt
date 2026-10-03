@@ -707,6 +707,11 @@ class FinanceRepository @Inject constructor(
         reconcileWorkspaces(workspaces)
         check(workspaces.any { it.id == WorkspaceOperation.current().workspaceId && it.archivedAt == null })
         try { forecastState() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { /* Cache continua pendente; tela informa falha. */ }
+        // Primeiro le contas e cartoes pelos endpoints dedicados. O backend usa
+        // essas leituras para consolidar duplicatas e remapear as transacoes
+        // antes de montar o snapshot completo.
+        val remoteAccounts = api.accounts()
+        val remoteCards = api.cards()
         val snapshot = api.syncSnapshot()
 
         // Exclusoes feitas no Web precisam invalidar tambem o cache offline do
@@ -778,8 +783,6 @@ class FinanceRepository @Inject constructor(
 
         val remoteCategories =
             api.categories()
-        val remoteCards =
-            api.cards()
         val remoteBudgets =
             api.budgets()
         val remoteGoals =
@@ -831,7 +834,7 @@ class FinanceRepository @Inject constructor(
         }
 
         dao.upsertAccounts(
-            snapshot.accounts.filter { it.id !in protectedAccounts }.map {
+            remoteAccounts.filter { it.id !in protectedAccounts }.map {
                 AccountEntity(
                     id = it.id,
                     institutionName =
@@ -1027,14 +1030,16 @@ class FinanceRepository @Inject constructor(
     suspend fun syncPendingNow(): Unit = withWorkspace {
         if (WorkspaceOperation.current().userId == 0) return@withWorkspace
 
+        // Limpa duplicatas antigas no servidor antes de importar/migrar IDs.
+        // As chamadas sao idempotentes e preservam todas as transacoes.
+        runCatching { api.accounts() }
+        runCatching { api.cards() }
+
         // Primeiro reconcilia os dados legados que ja estavam marcados como
         // SYNCED no aparelho. Isso e essencial na primeira conexao com um banco
         // de nuvem novo, antes de enviar transacoes PENDING_CREATE.
         migrateLegacySyncedLocalRows()
 
-        // Depois da reconciliacao idempotente acima, a fila PENDING_* segue na
-        // ordem normal. O servidor devolve os IDs definitivos para que nenhuma
-        // transacao seja enviada apontando para conta/cartao/categoria inexistente.
         var remoteWorkspaces = api.workspaces()
         var remoteWorkspace = remoteWorkspaces.firstOrNull { it.id == WorkspaceOperation.current().workspaceId }
         if (remoteWorkspace == null) {
@@ -1054,7 +1059,7 @@ class FinanceRepository @Inject constructor(
         // Antes de criar, tentamos reconciliar com uma conta equivalente que já
         // exista no servidor. Isso torna a operação idempotente caso o envio tenha
         // sido concluído no servidor, mas o app tenha fechado antes do remapeamento local.
-        val remoteAccountsForReconcile = api.syncSnapshot().accounts.toMutableList()
+        val remoteAccountsForReconcile = api.accounts().toMutableList()
         dao.pendingAccounts().forEach { local ->
             val existing = remoteAccountsForReconcile.firstOrNull { remote ->
                 remote.institutionName.trim().equals(local.institutionName.trim(), ignoreCase = true) &&
@@ -1071,9 +1076,18 @@ class FinanceRepository @Inject constructor(
                 syncState = "SYNCED"))
         }
 
-        // 2) Cartões criados offline.
+        // 2) Cartões criados offline. Antes de criar, reconciliamos com um
+        // cartão equivalente que ja exista na nuvem. Isso evita duplicacao se o
+        // POST anterior tiver sido concluido e o app fechado antes do remapeamento.
+        val remoteCardsForReconcile = api.cards().toMutableList()
         dao.pendingCards().forEach { local ->
-            val server = api.createCard(
+            val existing = remoteCardsForReconcile.firstOrNull { remote ->
+                remote.bankName.trim().equals(local.bankName.trim(), ignoreCase = true) &&
+                    remote.brand.trim().equals(local.brand.trim(), ignoreCase = true) &&
+                    remote.lastFour.trim() == local.lastFour.trim() &&
+                    (remote.nickname ?: "").trim().equals((local.nickname ?: "").trim(), ignoreCase = true)
+            }
+            val server = existing ?: api.createCard(
                 CreditCardCreateRequest(
                     bankName = local.bankName,
                     brand = local.brand,
@@ -1083,7 +1097,7 @@ class FinanceRepository @Inject constructor(
                     closingDay = local.closingDay,
                     dueDay = local.dueDay
                 )
-            )
+            ).also { remoteCardsForReconcile.add(it) }
 
             dao.replacePendingCard(
                 localId = local.id,

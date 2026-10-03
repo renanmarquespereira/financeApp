@@ -21,6 +21,52 @@ from app.core.config import settings
 router = APIRouter()
 
 
+def _norm(value: str | None) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _account_dedupe_key(account: BankAccount) -> tuple[str, str, str, str]:
+    external = _norm(account.external_account_id)
+    masked = "".join(ch for ch in (account.masked_account or "") if ch.isdigit())[-8:]
+    return (_norm(account.institution_name), _norm(account.account_name), masked, external)
+
+
+def _merge_duplicate_accounts(db: Session, user_id: int) -> None:
+    rows = (
+        db.query(BankAccount)
+        .filter(BankAccount.user_id == user_id)
+        .order_by(BankAccount.id.asc())
+        .all()
+    )
+    groups: dict[tuple[str, str, str, str], list[BankAccount]] = {}
+    for row in rows:
+        key = _account_dedupe_key(row)
+        if not key[0]:
+            continue
+        groups.setdefault(key, []).append(row)
+
+    changed = False
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        keeper = group[0]
+        for duplicate in group[1:]:
+            db.query(Transaction).filter(
+                Transaction.user_id == user_id,
+                Transaction.account_id == duplicate.id,
+            ).update(
+                {Transaction.account_id: keeper.id},
+                synchronize_session=False,
+            )
+            if keeper.current_balance is None and duplicate.current_balance is not None:
+                keeper.current_balance = duplicate.current_balance
+                keeper.balance_updated_at = duplicate.balance_updated_at
+            db.delete(duplicate)
+            changed = True
+    if changed:
+        db.commit()
+
+
 def _status_for(account: BankAccount, connections: list[OpenFinanceConnection]) -> str:
     if not account.external_account_id:
         return "manual"
@@ -44,6 +90,7 @@ def list_accounts(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    _merge_duplicate_accounts(db, user.id)
     accounts = (
         db.query(BankAccount)
         .filter(BankAccount.user_id == user.id)
@@ -77,7 +124,30 @@ def create_account(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    obj = BankAccount(user_id=user.id, **data.model_dump())
+    _merge_duplicate_accounts(db, user.id)
+    candidate = BankAccount(user_id=user.id, **data.model_dump())
+    key = _account_dedupe_key(candidate)
+    existing = next(
+        (row for row in db.query(BankAccount).filter(BankAccount.user_id == user.id).all()
+         if _account_dedupe_key(row) == key),
+        None,
+    )
+    if existing is not None:
+        connections = db.query(OpenFinanceConnection).filter(OpenFinanceConnection.user_id == user.id).all()
+        return AccountResponse(
+            workspace_id=scope_id(db),
+            id=existing.id,
+            institution_name=existing.institution_name,
+            institution_id=existing.institution_id,
+            account_name=existing.account_name,
+            masked_account=existing.masked_account,
+            external_account_id=existing.external_account_id,
+            connection_status=_status_for(existing, connections),
+            current_balance=existing.current_balance,
+            balance_updated_at=existing.balance_updated_at,
+        )
+
+    obj = candidate
     db.add(obj)
     db.commit()
     db.refresh(obj)
