@@ -6,7 +6,55 @@ import '../../core/input_masks.dart';
 import '../../core/models.dart';
 
 const plannedDebtPrefix = 'Prevista • Dívida • ';
-bool isPlannedDebtTransaction(FinancialTransaction t) => t.description.startsWith(plannedDebtPrefix);
+bool isPlannedDebtTransaction(FinancialTransaction t) => t.description.toLowerCase().startsWith(plannedDebtPrefix.toLowerCase());
+
+String _canonicalDebtName(String raw) {
+  final value = raw.trim();
+  final lower = value.toLowerCase();
+  final indexes = <int>[];
+  for (final marker in const [' • credor:', ' • parcela']) {
+    final i = lower.indexOf(marker);
+    if (i >= 0) indexes.add(i);
+  }
+  final cut = indexes.isEmpty ? value.length : indexes.reduce((a, b) => a < b ? a : b);
+  return value.substring(0, cut).trim();
+}
+
+String? _debtNameFromDescription(String description) {
+  String body;
+  if (description.toLowerCase().startsWith(plannedDebtPrefix.toLowerCase())) {
+    body = description.substring(plannedDebtPrefix.length);
+  } else if (description.toLowerCase().startsWith('pagamento de dívida •')) {
+    final i = description.indexOf('•');
+    body = i >= 0 ? description.substring(i + 1) : description;
+  } else {
+    return null;
+  }
+  final name = _canonicalDebtName(body);
+  return name.isEmpty ? null : name;
+}
+
+String? debtCreditorFromTransactionDescription(String description) {
+  final m = RegExp(r'•\s*Credor:\s*(.*?)\s*(?:•\s*Parcela|$)', caseSensitive: false).firstMatch(description);
+  final value = m?.group(1)?.trim() ?? '';
+  return value.isEmpty ? null : value;
+}
+
+int? _debtInstallmentNumber(FinancialTransaction t) =>
+    int.tryParse(RegExp(r'Parcela\s+(\d+)/', caseSensitive: false).firstMatch(t.description)?.group(1) ?? '');
+
+int? _debtInstallmentTotal(FinancialTransaction t) =>
+    int.tryParse(RegExp(r'Parcela\s+\d+/(\d+)', caseSensitive: false).firstMatch(t.description)?.group(1) ?? '');
+
+int _stableDebtId(String name, DateTime firstDue) {
+  final raw = '${name.toLowerCase()}|${_iso(firstDue)}';
+  var hash = 17;
+  for (final unit in raw.codeUnits) {
+    hash = ((hash * 31) + unit) & 0x7fffffff;
+  }
+  if (hash == 0) hash = 1;
+  return -hash;
+}
 
 class _DebtPayment {
   const _DebtPayment({required this.amount, required this.date, this.accountId, this.installments = 1});
@@ -78,6 +126,111 @@ class _Debt {
   }
 }
 
+List<_Debt> _normalizeDebtRecords(List<_Debt> rows) {
+  final groups = <String, List<_Debt>>{};
+  for (final debt in rows) {
+    final cleanName = _canonicalDebtName(debt.name);
+    final creditor = debt.creditor.trim().isNotEmpty
+        ? debt.creditor.trim()
+        : (debtCreditorFromTransactionDescription(debt.name) ?? '');
+    final normalized = _Debt(
+      id: debt.id,
+      name: cleanName.isEmpty ? debt.name.trim() : cleanName,
+      creditor: creditor,
+      installmentAmount: debt.installmentAmount,
+      installmentCount: debt.installmentCount,
+      firstDueDate: debt.firstDueDate,
+      originalAmount: debt.originalAmount,
+      payments: debt.payments,
+    );
+    final key = '${normalized.name.toLowerCase()}|${normalized.creditor.toLowerCase()}';
+    groups.putIfAbsent(key, () => <_Debt>[]).add(normalized);
+  }
+
+  return groups.values.map((group) {
+    final preferred = group.where((d) => d.id > 0).firstOrNull ?? group.first;
+    final paymentMap = <String, _DebtPayment>{};
+    for (final d in group) {
+      for (final p in d.payments) {
+        paymentMap['${p.date}|${p.amount}|${p.accountId}|${p.installments}'] = p;
+      }
+    }
+    final dueDates = group.map((d) => DateTime.tryParse(d.firstDueDate)).whereType<DateTime>().toList()..sort();
+    final firstDue = dueDates.isEmpty ? preferred.firstDueDate : _iso(dueDates.first);
+    final creditor = group.where((d) => d.creditor.trim().isNotEmpty).map((d) => d.creditor.trim()).firstOrNull ?? '';
+    final installments = group.map((d) => d.installmentCount).reduce((a, b) => a > b ? a : b);
+    final originals = group.map((d) => d.originalAmount).toList();
+    final original = originals.reduce((a, b) => a > b ? a : b);
+    final installment = group.map((d) => d.installmentAmount).where((v) => v > 0).firstOrNull ?? preferred.installmentAmount;
+    return _Debt(
+      id: preferred.id,
+      name: group.first.name,
+      creditor: creditor,
+      installmentAmount: installment,
+      installmentCount: installments,
+      firstDueDate: firstDue,
+      originalAmount: original,
+      payments: paymentMap.values.toList(),
+    );
+  }).toList();
+}
+
+List<_Debt> _recoverDebtRecordsFromTransactions(
+  List<FinancialTransaction> transactions,
+  List<_Debt> existing,
+) {
+  final existingNames = existing.map((d) => d.name.trim().toLowerCase()).toSet();
+  final groups = <String, List<FinancialTransaction>>{};
+  for (final tx in transactions) {
+    final isPayment = tx.description.toLowerCase().startsWith('pagamento de dívida •');
+    if (!isPlannedDebtTransaction(tx) && !isPayment) continue;
+    final name = _debtNameFromDescription(tx.description);
+    if (name == null) continue;
+    groups.putIfAbsent(name, () => <FinancialTransaction>[]).add(tx);
+  }
+
+  final result = <_Debt>[];
+  for (final entry in groups.entries) {
+    final name = entry.key;
+    if (existingNames.contains(name.trim().toLowerCase())) continue;
+    final rows = entry.value;
+    final totals = rows.map(_debtInstallmentTotal).whereType<int>().toList();
+    final numbers = rows.map(_debtInstallmentNumber).whereType<int>().toList();
+    final allCounts = [...totals, ...numbers];
+    final count = (allCounts.isEmpty ? rows.length.clamp(1, 360) : allCounts.reduce((a, b) => a > b ? a : b).clamp(1, 360)).toInt();
+    final planned = rows.where(isPlannedDebtTransaction).toList();
+    final refs = planned.isEmpty ? rows : planned;
+    if (refs.isEmpty) continue;
+    final installmentAmount = refs.map((t) => t.amount.abs()).where((v) => v > 0).fold<double>(0, (a, b) => a > b ? a : b);
+    if (installmentAmount <= 0) continue;
+    final dueCandidates = <DateTime>[];
+    for (final tx in rows) {
+      final date = DateTime.tryParse(tx.date);
+      if (date == null) continue;
+      final number = _debtInstallmentNumber(tx) ?? 1;
+      dueCandidates.add(_monthDate(date, -(number - 1)));
+    }
+    dueCandidates.sort();
+    final firstDue = dueCandidates.isEmpty ? _monthDate(DateTime.now(), 1) : dueCandidates.first;
+    final creditor = rows.map((t) => debtCreditorFromTransactionDescription(t.description)).whereType<String>().firstOrNull ?? '';
+    final payments = rows
+        .where((t) => t.description.toLowerCase().startsWith('pagamento de dívida •'))
+        .map((t) => _DebtPayment(amount: t.amount.abs(), date: _iso(DateTime.tryParse(t.date) ?? DateTime.now()), accountId: t.accountId, installments: 1))
+        .toList();
+    result.add(_Debt(
+      id: _stableDebtId(name, firstDue),
+      name: name,
+      creditor: creditor,
+      installmentAmount: installmentAmount,
+      installmentCount: count,
+      firstDueDate: _iso(firstDue),
+      originalAmount: installmentAmount * count,
+      payments: payments,
+    ));
+  }
+  return result;
+}
+
 class DebtCenterController {
   final String workspaceId;
   final ApiClient api;
@@ -124,9 +277,19 @@ class DebtCenterController {
       if (accessToken != null) await _store.sync(api, accessToken!);
     } catch (_) {}
     final p = await _store.read();
-    debts = (p['debts'] as List? ?? []).map((e) => _Debt.fromJson(Map<String, dynamic>.from(e))).toList();
+    final rawDebts = (p['debts'] as List? ?? []).map((e) => _Debt.fromJson(Map<String, dynamic>.from(e))).toList();
     deleted = (p['deletedDebtIds'] as List? ?? []).map((e) => int.tryParse(forecastId(e))).whereType<int>().toSet();
-    debts = debts.where((d) => !deleted.contains(d.id)).toList();
+    final filtered = rawDebts.where((d) => !deleted.contains(d.id)).toList();
+    final base = _normalizeDebtRecords(filtered);
+    final keptIds = base.map((d) => d.id).toSet();
+    final collapsedIds = filtered.map((d) => d.id).where((id) => !keptIds.contains(id)).toSet();
+    if (collapsedIds.isNotEmpty) deleted.addAll(collapsedIds);
+    final recovered = _recoverDebtRecordsFromTransactions(transactions, base);
+    debts = _normalizeDebtRecords([...base, ...recovered]);
+    final repairedExisting = collapsedIds.isNotEmpty || filtered.any((d) => _canonicalDebtName(d.name) != d.name.trim());
+    if (recovered.isNotEmpty || repairedExisting) {
+      await save();
+    }
   }
 
   Future<void> save() async {
@@ -138,7 +301,18 @@ class DebtCenterController {
 
   FinancialTransaction? plannedFor(int debtId, int installment) {
     final ext = 'debt-plan:$debtId:$installment';
-    return transactions.where((t) => t.externalTransactionId == ext).firstOrNull ?? localPlanned[ext];
+    final direct = transactions.where((t) => t.externalTransactionId == ext).firstOrNull ?? localPlanned[ext];
+    if (direct != null) return direct;
+    final debt = debts.where((d) => d.id == debtId).firstOrNull;
+    if (debt == null) return null;
+    final candidates = <FinancialTransaction>[...transactions, ...localPlanned.values];
+    return candidates.where((t) {
+      if (!isPlannedDebtTransaction(t)) return false;
+      final name = _debtNameFromDescription(t.description);
+      return name != null &&
+          name.toLowerCase() == debt.name.trim().toLowerCase() &&
+          _debtInstallmentNumber(t) == installment;
+    }).firstOrNull;
   }
 
   Future<void> deletePlanned(FinancialTransaction tx) async {
@@ -245,38 +419,50 @@ Future<void> showDebtCenter(
                                         );
                                       }).toList(),
                                     ),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
                                     children: [
-                                      TextButton.icon(
-                                        onPressed: () async {
-                                          await _editDebt(ctx, ctl, d);
-                                          setD(() {});
-                                        },
-                                        icon: const Icon(Icons.edit),
-                                        label: const Text('Editar'),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.end,
+                                        children: [
+                                          TextButton.icon(
+                                            onPressed: () async {
+                                              await _editDebt(ctx, ctl, d);
+                                              setD(() {});
+                                            },
+                                            icon: const Icon(Icons.edit),
+                                            label: const Text('Editar'),
+                                          ),
+                                          TextButton.icon(
+                                            onPressed: () async {
+                                              ctl.deleted.add(d.id);
+                                              ctl.debts.removeWhere((x) => x.id == d.id);
+                                              for (var n = d.paidInstallments + 1; n <= d.installmentCount; n++) {
+                                                final tx = ctl.plannedFor(d.id, n);
+                                                if (tx != null) await ctl.deletePlanned(tx);
+                                              }
+                                              await ctl.save();
+                                              setD(() {});
+                                            },
+                                            icon: const Icon(Icons.delete_outline),
+                                            label: const Text('Excluir'),
+                                          ),
+                                        ],
                                       ),
-                                      TextButton(
-                                        onPressed: () async {
-                                          ctl.deleted.add(d.id);
-                                          ctl.debts.removeWhere((x) => x.id == d.id);
-                                          for (var n = d.paidInstallments + 1; n <= d.installmentCount; n++) {
-                                            final tx = ctl.plannedFor(d.id, n);
-                                            if (tx != null) await ctl.deletePlanned(tx);
-                                          }
-                                          await ctl.save();
-                                          setD(() {});
-                                        },
-                                        child: const Text('Excluir'),
-                                      ),
-                                      if (d.remaining > 0)
-                                        FilledButton.tonal(
-                                          onPressed: () async {
-                                            await _payDebt(ctx, ctl, d);
-                                            setD(() {});
-                                          },
-                                          child: const Text('Registrar pagamento'),
+                                      if (d.remaining > 0) ...[
+                                        const SizedBox(height: 6),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: FilledButton.tonalIcon(
+                                            onPressed: () async {
+                                              await _payDebt(ctx, ctl, d);
+                                              setD(() {});
+                                            },
+                                            icon: const Icon(Icons.payments_outlined),
+                                            label: const Text('Registrar pagamento'),
+                                          ),
                                         ),
+                                      ],
                                     ],
                                   ),
                                 ],

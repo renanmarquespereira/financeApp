@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../core/models.dart';
 import '../../core/category_bank_visuals.dart';
+import 'debt_center.dart';
 
 
 class _TxStatusInfo {
@@ -91,7 +92,15 @@ class _TransactionsViewState extends State<TransactionsView> {
   String monthLabel(DateTime d) => '${const ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][d.month - 1]} de ${d.year}';
   String monthSearchText(DateTime d){final names=const ['janeiro','fevereiro','marco','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];return '${names[d.month-1]} ${d.month.toString().padLeft(2,'0')} ${d.year} ${d.month.toString().padLeft(2,'0')}/${d.year}';}
   String sourceLabel(String s) => norm(s).contains('open') ? 'Open Finance' : 'Manual';
-  String accountName(FinancialTransaction t) => widget.snapshot.accounts.where((e) => e.id == t.accountId).map((e) => e.institutionName).firstOrNull ?? (t.isCard ? widget.snapshot.cards.where((e) => e.id == t.cardId).map((e) => e.bankName).firstOrNull : null) ?? 'Sem banco';
+  String accountName(FinancialTransaction t) {
+    if (isPlannedDebtTransaction(t)) {
+      final creditor = debtCreditorFromTransactionDescription(t.description);
+      if (creditor != null && creditor.isNotEmpty) return creditor;
+    }
+    return widget.snapshot.accounts.where((e) => e.id == t.accountId).map((e) => e.institutionName).firstOrNull ??
+        (t.isCard ? widget.snapshot.cards.where((e) => e.id == t.cardId).map((e) => e.bankName).firstOrNull : null) ??
+        'Sem banco';
+  }
   FinanceCategory? categoryOf(FinancialTransaction t) => widget.snapshot.categories.where((e) => e.id == t.categoryId).firstOrNull;
   String categoryName(FinancialTransaction t) => categoryOf(t)?.name ?? 'Sem categoria';
 
@@ -105,7 +114,7 @@ class _TransactionsViewState extends State<TransactionsView> {
       final d=dateOf(t.date);
       if(d==null)return false;
       if(q.isEmpty&&(d.year!=selectedMonth.year || d.month!=selectedMonth.month))return false;
-      if(view=='expenses'&&t.isCard&&t.source!='card_payment')return false;
+      if(view=='expenses'&&(t.isCard||t.source=='card_purchase')&&t.source!='card_payment')return false;
       if(view=='cards'&&(t.description.startsWith('Prevista • Dívida • ') || !t.isCard || t.cardId!=cardId))return false;
       if(source=='manual'&&t.source!='manual'||source=='open_finance'&&t.source!='open_finance')return false;
       if(type=='income'&&t.type!='income'||type=='expense'&&t.type=='income')return false;

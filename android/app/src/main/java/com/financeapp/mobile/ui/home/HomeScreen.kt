@@ -908,7 +908,14 @@ fun HomeScreen(
                         showGlobalNewCard = true
                     },
                     onOpenDetails = {
-                        selectedTransaction = it
+                        if (
+                            isPlannedDebtTransaction(it) ||
+                            it.description.startsWith("Pagamento de dívida •", ignoreCase = true)
+                        ) {
+                            showDebtCenter = true
+                        } else {
+                            selectedTransaction = it
+                        }
                     },
                     onDelete = {
                         pendingDelete = it

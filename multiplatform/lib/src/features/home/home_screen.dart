@@ -747,7 +747,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final timeLabel = d != null && hasTime
         ? '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}'
         : '--:--';
+    final debtCreditor = isPlannedDebtTransaction(t)
+        ? debtCreditorFromTransactionDescription(t.description)
+        : null;
     final account =
+        debtCreditor ??
         widget.snapshot.accounts
             .where((a) => a.id == t.accountId)
             .map((a) => a.institutionName)
@@ -2519,7 +2523,11 @@ class _HomeScreenState extends State<HomeScreen> {
               final timeLabel = t.isCard && d != null
                   ? ' - ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}'
                   : '';
+              final debtCreditor = isPlannedDebtTransaction(t)
+                  ? debtCreditorFromTransactionDescription(t.description)
+                  : null;
               final account =
+                  debtCreditor ??
                   widget.snapshot.accounts
                       .where((a) => a.id == t.accountId)
                       .map((a) => a.institutionName)
@@ -2794,7 +2802,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     final timeLabel = t.isCard && d != null
                         ? ' - ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}'
                         : '';
+                    final debtCreditor = isPlannedDebtTransaction(t)
+                        ? debtCreditorFromTransactionDescription(t.description)
+                        : null;
                     final account =
+                        debtCreditor ??
                         widget.snapshot.accounts
                             .where((a) => a.id == t.accountId)
                             .map((a) => a.institutionName)
@@ -4750,6 +4762,20 @@ class _HomeScreenState extends State<HomeScreen> {
     FinancialTransaction? old,
     ScannedExpenseDraft? scanned,
   ]) async {
+    if (old != null &&
+        (isPlannedDebtTransaction(old) ||
+            old.description.startsWith('Pagamento de dívida •'))) {
+      await showDebtCenter(
+        context,
+        workspaceId: widget.workspace.id,
+        api: widget.api,
+        accessToken: widget.accessToken,
+        accounts: widget.snapshot.accounts,
+        transactions: widget.snapshot.transactions,
+        onSaveTransaction: widget.onSaveTransaction,
+      );
+      return;
+    }
     final desc = TextEditingController(
       text: old?.description ?? scanned?.description ?? '',
     );

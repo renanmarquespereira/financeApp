@@ -24,6 +24,8 @@ def get_transaction(transaction_id:int,db:Session=Depends(get_db),user:User=Depe
     return obj
 @router.post("",response_model=TransactionResponse)
 def create_transaction(data:TransactionCreate,db:Session=Depends(get_db),user:User=Depends(get_current_user)):
+    if data.source == "card_purchase" and data.card_id is None:
+        raise HTTPException(422, "Compra de cartão exige um cartão vinculado")
     # Lançamentos manuais podem existir sem uma conta bancária vinculada.
     if data.account_id is not None:
         account=db.query(BankAccount).filter(BankAccount.id==data.account_id,BankAccount.user_id==user.id).first()

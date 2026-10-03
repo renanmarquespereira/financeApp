@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import logging
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 from app.core.workspace import get_workspace_db as get_db, scope_id
 from app.core.security import get_current_user
@@ -24,7 +24,10 @@ def _get_or_create_state(db: Session, user_id: int) -> UserSyncState:
     return state
 
 @router.get("/snapshot")
-def get_snapshot(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def get_snapshot(response: Response, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     accounts = db.query(BankAccount).filter(BankAccount.user_id == user.id).order_by(BankAccount.id.asc()).all()
     transactions = db.query(Transaction).filter(Transaction.user_id == user.id).order_by(Transaction.date.desc(), Transaction.id.desc()).all()
     categories = db.query(Category).filter(Category.user_id == user.id).order_by(Category.id.asc()).all()

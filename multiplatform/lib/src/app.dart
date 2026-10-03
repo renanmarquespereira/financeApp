@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 import 'core/forecast_store.dart';
 import 'core/finance_theme.dart';
 import 'dart:math';
@@ -118,9 +119,10 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
   }
   Future<void> _loadLocal() async {
     if (workspace == null) return;
-    // Guest e offline continuam usando o cache. Quando autenticado e o servidor
-    // esta acessivel, nao mostramos primeiro uma fotografia antiga do navegador.
-    if (!guest && tokens != null && serverOk) {
+    // No Web autenticado, o servidor e sempre a fonte de verdade. Nunca recarrega
+    // um snapshot financeiro antigo do SharedPreferences/LocalStorage do navegador.
+    // Guest continua local; iOS/desktop ainda podem usar cache quando realmente offline.
+    if (!guest && tokens != null && (kIsWeb || serverOk)) {
       snapshot = FinancialSnapshot.empty();
     } else {
       snapshot = await local.read(workspace!.id);
@@ -214,7 +216,11 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
     } catch (_) {
       serverOk = false;
 
-      if (snapshot.accounts.isEmpty &&
+      // Web autenticado nao pode ressuscitar transacoes excluidas a partir do
+      // cache do navegador quando uma requisicao falha. Mantem a tela atual e
+      // aguarda a proxima sincronizacao com o servidor.
+      if (!kIsWeb &&
+          snapshot.accounts.isEmpty &&
           snapshot.transactions.isEmpty &&
           snapshot.categories.isEmpty &&
           snapshot.cards.isEmpty) {
