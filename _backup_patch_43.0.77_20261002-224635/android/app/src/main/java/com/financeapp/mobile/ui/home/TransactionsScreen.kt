@@ -3196,7 +3196,7 @@ private fun SwipeableTransactionRow(
                 categoryName,
             categoryIcon = categoryIcon,
             card = card,
-                debtCreditor = debtCreditor,
+            debtCreditor = debtCreditor,
             selected = selected,
             possibleDuplicate = possibleDuplicate,
             onCompareDuplicate = onCompareDuplicate,

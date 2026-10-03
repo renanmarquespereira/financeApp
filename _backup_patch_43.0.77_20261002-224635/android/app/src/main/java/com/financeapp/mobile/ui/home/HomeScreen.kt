@@ -918,15 +918,7 @@ fun HomeScreen(
                     onUpdateCategoryBulk =
                         onUpdateTransactionsCategoryBulk,
                     onUpdateAccountBulk =
-                        onUpdateTransactionsAccountBulk,
-                    debtCreditorFor = { tx ->
-                        debtCreditorForTransaction(
-                            appContext,
-                            state.userEmail ?: "local",
-                            workspaceId,
-                            tx
-                        )
-                    }
+                        onUpdateTransactionsAccountBulk
                 )
                 HomeTab.FORECAST -> FinancialForecastScreen(
                     accounts = accounts,
