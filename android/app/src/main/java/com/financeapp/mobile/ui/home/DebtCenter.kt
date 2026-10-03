@@ -37,6 +37,23 @@ internal const val PLANNED_DEBT_PREFIX = "Prevista • Dívida • "
 internal fun isPlannedDebtTransaction(tx: TransactionEntity): Boolean =
     tx.description.startsWith(PLANNED_DEBT_PREFIX, ignoreCase = true)
 
+internal fun debtCreditorForTransaction(
+    context: Context,
+    userKey: String,
+    workspaceId: String,
+    tx: TransactionEntity
+): String? {
+    if (!isPlannedDebtTransaction(tx)) return null
+    val body = tx.description.removePrefix(PLANNED_DEBT_PREFIX)
+    val debtName = body.substringBefore(" • Parcela").trim()
+    if (debtName.isBlank()) return null
+    return loadCenterDebts(context, userKey, workspaceId)
+        .firstOrNull { it.name.equals(debtName, ignoreCase = true) }
+        ?.creditor
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+}
+
 private data class DebtCenterPayment(
     val amount: Double,
     val date: LocalDate,
@@ -277,16 +294,37 @@ internal fun DebtCenterFlow(
                                             Text("${p.date.format(df)} • ${money.format(p.amount)} • ${p.installments} parcela(s) • $bank", style = MaterialTheme.typography.bodySmall)
                                         }
                                     }
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                        TextButton(onClick = { editing = d }) {
-                                            Icon(Icons.Default.Edit, null); Spacer(Modifier.width(4.dp)); Text("Editar")
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            TextButton(onClick = { editing = d }) {
+                                                Icon(Icons.Default.Edit, null)
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Editar")
+                                            }
+                                            TextButton(onClick = {
+                                                val del = deletedIds + d.id
+                                                persist(debts.filterNot { it.id == d.id }, del)
+                                            }) {
+                                                Icon(Icons.Default.Delete, null)
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Excluir")
+                                            }
                                         }
-                                        TextButton(onClick = {
-                                            val del = deletedIds + d.id
-                                            persist(debts.filterNot { it.id == d.id }, del)
-                                        }) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(4.dp)); Text("Excluir") }
-                                        if (d.remaining > 0.009) FilledTonalButton(onClick = { paying = d }) {
-                                            Icon(Icons.Default.Payments, null); Spacer(Modifier.width(5.dp)); Text("Registrar pagamento")
+                                        if (d.remaining > 0.009) {
+                                            FilledTonalButton(
+                                                onClick = { paying = d },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Icon(Icons.Default.Payments, null)
+                                                Spacer(Modifier.width(6.dp))
+                                                Text("Registrar pagamento", maxLines = 1)
+                                            }
                                         }
                                     }
                                 }

@@ -3523,7 +3523,16 @@ private fun DashboardScreen(
                                 biggestExpenseTransaction?.let { tx ->
                                     val category = categories.firstOrNull { it.id == tx.categoryId }
                                     val categoryName = category?.name ?: "Sem categoria"
-                                    val accountName = accounts.firstOrNull { it.id == tx.accountId }?.let(::homeAccountLabel) ?: cards.firstOrNull { it.id == tx.cardId }?.bankName ?: "Sem banco"
+                                    val debtCreditor = debtCreditorForTransaction(
+                                                        appContext,
+                                                        state.userEmail ?: "local",
+                                                        workspaceId,
+                                                        tx
+                                                    )
+                                                    val accountName = debtCreditor
+                                                        ?: accounts.firstOrNull { it.id == tx.accountId }?.let(::homeAccountLabel)
+                                                        ?: cards.firstOrNull { it.id == tx.cardId }?.bankName
+                                                        ?: "Sem banco"
                                     val sourceLabel = if (tx.source.contains("open", ignoreCase = true)) "Open Finance" else "Manual"
                                     Card(
                                         Modifier.fillMaxWidth(),
@@ -3763,7 +3772,16 @@ private fun DashboardScreen(
                                                 )
                                                 Spacer(Modifier.width(10.dp))
                                                 Column(Modifier.weight(1f)) {
-                                                    val accountName = accounts.firstOrNull { it.id == tx.accountId }?.let(::homeAccountLabel) ?: cards.firstOrNull { it.id == tx.cardId }?.bankName ?: "Sem banco"
+                                                    val debtCreditor = debtCreditorForTransaction(
+                                                        appContext,
+                                                        state.userEmail ?: "local",
+                                                        workspaceId,
+                                                        tx
+                                                    )
+                                                    val accountName = debtCreditor
+                                                        ?: accounts.firstOrNull { it.id == tx.accountId }?.let(::homeAccountLabel)
+                                                        ?: cards.firstOrNull { it.id == tx.cardId }?.bankName
+                                                        ?: "Sem banco"
                                                     val typeLabel = if (tx.amount >= 0.0) "Entrada" else "Saída"
                                                     val sourceLabel = if (tx.source.contains("open", ignoreCase = true)) "Open Finance" else "Manual"
                                                     Text(tx.description, fontWeight = FontWeight.SemiBold, maxLines = 1)
