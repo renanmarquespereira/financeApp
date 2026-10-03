@@ -37,6 +37,16 @@ internal const val PLANNED_DEBT_PREFIX = "Prevista • Dívida • "
 internal fun isPlannedDebtTransaction(tx: TransactionEntity): Boolean =
     tx.description.startsWith(PLANNED_DEBT_PREFIX, ignoreCase = true)
 
+private fun canonicalDebtName(raw: String): String {
+    val value = raw.trim()
+    val cut = listOf(" • Credor:", " • Parcela")
+        .map { marker -> value.indexOf(marker, ignoreCase = true) }
+        .filter { it >= 0 }
+        .minOrNull()
+        ?: value.length
+    return value.substring(0, cut).trim()
+}
+
 private fun debtNameFromDescription(description: String): String? {
     val body = when {
         description.startsWith(PLANNED_DEBT_PREFIX, ignoreCase = true) ->
@@ -45,11 +55,7 @@ private fun debtNameFromDescription(description: String): String? {
             description.substringAfter('•')
         else -> return null
     }.trim()
-    return body
-        .substringBefore(" • Credor:", missingDelimiterValue = body)
-        .substringBefore(" • Parcela", missingDelimiterValue = body)
-        .trim()
-        .takeIf { it.isNotBlank() }
+    return canonicalDebtName(body).takeIf { it.isNotBlank() }
 }
 
 private fun debtCreditorFromDescription(description: String): String? =
@@ -105,6 +111,40 @@ private data class DebtCenterRecord(
     val remaining: Double get() = (originalAmount - paid).coerceAtLeast(0.0)
     val paidInstallments: Int get() = payments.sumOf { it.installments.coerceAtLeast(1) }.coerceAtMost(installmentCount)
     val nextDueDate: LocalDate get() = firstDueDate.plusMonths(paidInstallments.toLong())
+}
+
+private fun normalizeDebtRecords(rows: List<DebtCenterRecord>): List<DebtCenterRecord> {
+    return rows
+        .map { debt ->
+            val cleanName = canonicalDebtName(debt.name)
+            val recoveredCreditor = debt.creditor.trim().ifBlank {
+                debtCreditorFromDescription(debt.name).orEmpty()
+            }
+            debt.copy(name = cleanName.ifBlank { debt.name.trim() }, creditor = recoveredCreditor)
+        }
+        .groupBy { debt ->
+            val nameKey = debt.name.trim().lowercase(Locale("pt", "BR"))
+            val creditorKey = debt.creditor.trim().lowercase(Locale("pt", "BR"))
+            "$nameKey|$creditorKey"
+        }
+        .values
+        .map { group ->
+            val preferred = group.firstOrNull { it.id > 0 } ?: group.first()
+            val payments = group
+                .flatMap { it.payments }
+                .distinctBy { payment ->
+                    "${payment.date}|${payment.amount}|${payment.accountId}|${payment.installments}"
+                }
+            preferred.copy(
+                name = group.first().name,
+                creditor = group.firstOrNull { it.creditor.isNotBlank() }?.creditor.orEmpty(),
+                installmentAmount = group.map { it.installmentAmount }.firstOrNull { it > 0.0 } ?: preferred.installmentAmount,
+                installmentCount = group.maxOf { it.installmentCount },
+                firstDueDate = group.minOf { it.firstDueDate },
+                originalAmount = group.maxOf { it.originalAmount },
+                payments = payments
+            )
+        }
 }
 
 private fun recoverDebtRecordsFromTransactions(
@@ -318,14 +358,19 @@ internal fun DebtCenterFlow(
             val remoteDeleted = (remote["deletedDebtIds"] as? List<*>)?.mapNotNull { (it as? Number)?.toLong() ?: it?.toString()?.toLongOrNull() }?.toSet() ?: emptySet()
             val allDeleted = deletedIds + remoteDeleted
             val remoteDebts = (remote["debts"] as? List<*>)?.mapNotNull { (it as? Map<*, *>)?.let(::debtFromPayload) } ?: emptyList()
-            val base = (debts + remoteDebts).associateBy { it.id }.values.filterNot { it.id in allDeleted }.toList()
+            val rawBase = (debts + remoteDebts).associateBy { it.id }.values.filterNot { it.id in allDeleted }.toList()
+            // Versao 43.0.78 podia interpretar cada parcela como uma divida diferente.
+            // Normalizamos nomes antigos ("Nome • Credor: X • Parcela N/T") e consolidamos
+            // tudo antes de tentar recuperar qualquer registro ausente.
+            val base = normalizeDebtRecords(rawBase)
             val recovered = recoverDebtRecordsFromTransactions(transactions, base)
-            val merged = (base + recovered).associateBy { it.id }.values.sortedByDescending { it.id }
+            val merged = normalizeDebtRecords(base + recovered).sortedByDescending { it.id }
             debts = merged
             deletedIds = allDeleted
             saveCenterDebts(context, userKey, workspaceId, merged)
             saveCenterDeleted(context, userKey, workspaceId, allDeleted)
-            if (recovered.isNotEmpty()) {
+            val repairedExisting = rawBase.size != base.size || rawBase.any { canonicalDebtName(it.name) != it.name.trim() }
+            if (recovered.isNotEmpty() || repairedExisting) {
                 val current = remote.toMutableMap()
                 current["debts"] = merged.map { it.toPayload() }
                 current["deletedDebtIds"] = allDeleted.toList()

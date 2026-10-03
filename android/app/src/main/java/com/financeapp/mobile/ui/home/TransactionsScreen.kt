@@ -542,8 +542,10 @@ internal fun MonthlyTransactionsScreen(
                         highlightedTransactionId
                 }
 
-            if (highlighted != null) {
-                // Ao editar uma transação, apenas navegue até o novo mês.
+            if (highlighted != null && !isPlannedDebtTransaction(highlighted)) {
+                // Parcelas futuras de dívida são criadas em lote. Elas não devem
+                // arrastar automaticamente a tela para um mês futuro.
+                // Ao editar uma transação comum, apenas navegue até o novo mês.
                 // Não force a aba Cartões: compras de cartão também pertencem
                 // à visão geral de Despesas e devem continuar visíveis nela.
 
@@ -3524,8 +3526,7 @@ private fun TransactionRow(
 
                 val isCardTransaction =
                     tx.cardId != null ||
-                        tx.installmentGroup != null ||
-                        tx.installmentTotal != null
+                        tx.source == "card_purchase"
 
                 if (isCardTransaction) {
                     val cardEnding =
