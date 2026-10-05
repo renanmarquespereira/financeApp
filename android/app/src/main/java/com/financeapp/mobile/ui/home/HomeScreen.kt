@@ -256,6 +256,7 @@ fun HomeScreen(
     onClearMessage: () -> Unit
 ) {
     val appContext = LocalContext.current
+    BackupAutoRunner(workspaceId = workspaceId, onExportBackup = onExportBackup)
     val backupScope = rememberCoroutineScope()
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var backupBusy by remember { mutableStateOf(false) }
@@ -436,6 +437,7 @@ fun HomeScreen(
         mutableStateOf(false)
     }
     var showSettings by remember { mutableStateOf(false) }
+    var showBackupSyncDialog by remember { mutableStateOf(false) }
     var showSyncCenter by remember { mutableStateOf(false) }
     var showAttentionCenter by remember { mutableStateOf(false) }
     var attentionOldestFirstRequest by remember { mutableIntStateOf(0) }
@@ -1386,6 +1388,7 @@ fun HomeScreen(
             email = state.userEmail,
             lastSyncAt = state.lastSyncAt,
             onSyncNow = onRefresh,
+            onBackupSync = { showSettings = false; showBackupSyncDialog = true },
             onEditPersonal = { showSettings = false; backupScope.launch { runCatching { onLoadPersonalProfile() }.onSuccess { personalProfile = it; showEditPersonal = true }.onFailure { backupMessage = it.message ?: "Não foi possível carregar seus dados" } } },
             onAppSettings = { showSettings = false; showAppCustomization = true },
             onDiagnostics = { showSettings = false; showDiagnostics = true },
@@ -1408,6 +1411,14 @@ fun HomeScreen(
             },
             onDismiss = { showSettings = false },
             onLogout = { showSettings = false; onLogout() }
+        )
+    }
+
+    if (showBackupSyncDialog) {
+        BackupSyncDialog(
+            onDismiss = { showBackupSyncDialog = false },
+            onExportBackup = onExportBackup,
+            onRestoreBackup = onRestoreBackup
         )
     }
 
@@ -2537,6 +2548,7 @@ private fun DiagnosticsDialog(
     categories: List<CategoryDto>,
     cards: List<CreditCardDto>,
     onSyncNow: () -> Unit,
+    onBackupSync: () -> Unit,
     onEditPersonal: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2759,34 +2771,19 @@ private fun AccountSettingsDialog(
                 }
                 HorizontalDivider()
 
+                Text("Backup e sincronização", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "Backup automático",
-                    style =
-                        MaterialTheme.typography.labelLarge
+                    "Seus dados financeiros ficam neste aparelho. Não existe mais sincronização automática com o servidor. O Google Drive é usado somente para backup.",
+                    style = MaterialTheme.typography.bodySmall
                 )
-                Text(
-                    "Contas e transações são restauradas automaticamente do servidor sempre que você entra em um aparelho.",
-                    style =
-                        MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    "Última restauração: $syncLabel",
-                    style =
-                        MaterialTheme.typography.bodySmall
-                )
-
                 OutlinedButton(
-                    onClick = onSyncNow,
+                    onClick = onBackupSync,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.CloudSync, null)
+                    Icon(Icons.Default.CloudUpload, null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Atualizar dados agora")
+                    Text("Backup e sincronização")
                 }
-                Text("Backup independente", style=MaterialTheme.typography.labelLarge)
-                Text("Crie um arquivo completo deste Workspace ou restaure um backup salvo. A restauração substitui os dados locais do Workspace atual.", style=MaterialTheme.typography.bodySmall)
-                OutlinedButton(onClick=onCreateBackup, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.SaveAlt,null); Spacer(Modifier.width(6.dp)); Text("Criar arquivo de backup") }
-                OutlinedButton(onClick=onRestoreBackup, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Restore,null); Spacer(Modifier.width(6.dp)); Text("Restaurar de arquivo") }
                 OutlinedButton(onClick=onImportData, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.UploadFile,null); Spacer(Modifier.width(6.dp)); Text("Importar dados financeiros") }
                 Text("XLSX, CSV, JSON, TXT e XML", style=MaterialTheme.typography.bodySmall)
 

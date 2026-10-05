@@ -4,9 +4,9 @@ import '../../core/app_customization.dart';
 import '../../core/notification_service.dart';
 
 class AppSettingsScreen extends StatefulWidget {
-  const AppSettingsScreen({super.key,required this.value,required this.themeMode,required this.onTheme,required this.onSave,required this.onCategories,required this.onDataManagement,required this.onOnboarding});
+  const AppSettingsScreen({super.key,required this.value,required this.themeMode,required this.onTheme,required this.onSave,required this.onCategories,required this.onDataManagement,required this.onOnboarding,required this.onBackupSync});
   final AppCustomization value; final ThemeMode themeMode; final ValueChanged<ThemeMode> onTheme;
-  final Future<void> Function(AppCustomization) onSave; final VoidCallback onCategories,onDataManagement,onOnboarding;
+  final Future<void> Function(AppCustomization) onSave; final VoidCallback onCategories,onDataManagement,onOnboarding,onBackupSync;
   @override State<AppSettingsScreen> createState()=>_AppSettingsScreenState();
 }
 
@@ -95,6 +95,10 @@ class _AppSettingsScreenState extends State<AppSettingsScreen>{
         sw('Maior gasto','Mostrar o maior gasto do mês.',value.showBiggestExpense,(v)=>apply(value.copyWith(showBiggestExpense:v))),
         sw('Faturas de cartão','Mostrar as faturas/cartões no Dashboard.',value.showInvoices,(v)=>apply(value.copyWith(showInvoices:v))),
         sw('Compras nos cartões','Mostrar compras de cartão separadas do saldo.',value.showCardPurchases,(v)=>apply(value.copyWith(showCardPurchases:v))),
+      ]),
+      if(!kIsWeb) section(title:'Backup e sincronização',icon:Icons.cloud_upload_outlined,children:[
+        const Padding(padding:EdgeInsets.fromLTRB(8,0,8,8),child:Align(alignment:Alignment.centerLeft,child:Text('Os dados ficam no aparelho. O Google Drive é usado somente para backup e restauração.'))),
+        ListTile(leading:const Icon(Icons.backup_outlined),title:const Text('Backup e sincronização'),subtitle:const Text('Fazer backup agora, restaurar, gerenciar e escolher 7, 15 ou 30 dias.'),trailing:const Icon(Icons.chevron_right),onTap:widget.onBackupSync),
       ]),
       section(title:'Organização financeira',icon:Icons.tune_outlined,children:[
         ListTile(leading:const Icon(Icons.category_outlined),title:const Text('Categorias'),subtitle:const Text('Criar, consultar e excluir categorias e seus limites.'),trailing:const Icon(Icons.chevron_right),onTap:widget.onCategories),

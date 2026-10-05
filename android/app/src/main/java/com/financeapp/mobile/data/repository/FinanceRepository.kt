@@ -144,6 +144,14 @@ class FinanceRepository @Inject constructor(
 ) {
     private val gson = Gson()
     private val operationMutex = Mutex()
+    // 43.0.83: Android passa a ser local-first estrito. O servidor continua
+    // disponivel para autenticacao/IA/Open Finance, mas nao sincroniza o banco
+    // financeiro local. Backup/restauracao sao explicitamente controlados pelo usuario.
+    private val financialCloudSyncEnabled = false
+    // 43.0.82: Android passa a ser local-first estrito. O servidor continua
+    // disponivel para autenticacao/IA/Open Finance, mas nao sincroniza o banco
+    // financeiro local. Backup/restauracao sao explicitamente controlados pelo usuario.
+    private val financialCloudSyncEnabled = false
 
 
     val activeWorkspace = session.workspaceScope
@@ -637,6 +645,7 @@ class FinanceRepository @Inject constructor(
     fun scheduleOfflineSync(
         force: Boolean = false
     ) {
+        if (!financialCloudSyncEnabled) return
         // Connectivity callbacks also run before login and after logout.
         val activeScope = session.workspaceScope.value ?: return
         if (activeScope.userId == 0) return
@@ -696,6 +705,11 @@ class FinanceRepository @Inject constructor(
     }
 
     suspend fun refresh(): Unit = withWorkspace {
+        if (!financialCloudSyncEnabled) {
+            // Nunca baixa snapshot financeiro do servidor. Room e a fonte oficial.
+            dao.clearPendingOperations()
+            return@withWorkspace
+        }
         if (WorkspaceOperation.current().userId == 0) return@withWorkspace
         // OFFLINE-FIRST: refresh nunca tenta enviar a fila antes de ler o servidor.
         // A fila e enviada exclusivamente pelo WorkManager/sync explicito. Isso evita
@@ -1028,6 +1042,10 @@ class FinanceRepository @Inject constructor(
     }
 
     suspend fun syncPendingNow(): Unit = withWorkspace {
+        if (!financialCloudSyncEnabled) {
+            dao.clearPendingOperations()
+            return@withWorkspace
+        }
         if (WorkspaceOperation.current().userId == 0) return@withWorkspace
 
         // Limpa duplicatas antigas no servidor antes de importar/migrar IDs.
@@ -2837,13 +2855,19 @@ class FinanceRepository @Inject constructor(
         val goals: List<GoalEntity>,
         val budgets: List<BudgetEntity>,
         val contributions: List<GoalContributionEntity>,
+        val debtPrefs: Map<String, Any?> = emptyMap(),
         val pendingOperations: List<PendingSyncOperationEntity> = emptyList()
     )
 
     suspend fun exportBackupJson(): String = withWorkspace {
+        val ws = WorkspaceOperation.current().workspaceId
+        val debtPrefs = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE).all
+            .filterKeys { it.endsWith("_$ws") }
+            .mapValues { it.value }
         Gson().toJson(FinanceBackupPayload(
             accounts=dao.backupAccounts(), transactions=dao.backupTransactions(), categories=dao.backupCategories(),
-            cards=dao.backupCards(), goals=dao.backupGoals(), budgets=dao.backupBudgets(), contributions=dao.backupGoalContributions(), pendingOperations=dao.pendingOperations()
+            cards=dao.backupCards(), goals=dao.backupGoals(), budgets=dao.backupBudgets(), contributions=dao.backupGoalContributions(),
+            debtPrefs=debtPrefs, pendingOperations=emptyList()
         ))
     }
 
@@ -2860,14 +2884,23 @@ class FinanceRepository @Inject constructor(
             dao.upsertGoals(payload.goals.map { it.copy(userId=scope.userId,workspaceId=scope.workspaceId) })
             payload.budgets.forEach { dao.upsertBudget(it.copy(userId=scope.userId,workspaceId=scope.workspaceId)) }
             payload.contributions.forEach { dao.upsertGoalContribution(it.copy(userId=scope.userId,workspaceId=scope.workspaceId)) }
-            payload.pendingOperations.forEach { dao.enqueueOperation(it.copy(id=0,userId=scope.userId,workspaceId=scope.workspaceId)) }
+            // A fila antiga de sincronizacao com servidor nao e restaurada no modo local-first.
         }
+        val debtEditor = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE).edit()
+        payload.debtPrefs.forEach { (key, value) ->
+            when (value) {
+                is String -> debtEditor.putString(key, value)
+                is Collection<*> -> debtEditor.putStringSet(key, value.mapNotNull { it?.toString() }.toSet())
+            }
+        }
+        debtEditor.apply()
         payload.transactions.size + payload.accounts.size + payload.categories.size + payload.cards.size + payload.goals.size + payload.budgets.size + payload.contributions.size
     }
 
     private fun forecastCacheKey(): String = WorkspaceOperation.current().let { "${it.userId}:${it.workspaceId}" }
 
     suspend fun forecastState(): Map<String, Any?> = withWorkspace {
+        if (!financialCloudSyncEnabled) return@withWorkspace mapOf("payload" to ForecastCache.read(context, forecastCacheKey()))
         if (WorkspaceOperation.current().userId == 0) return@withWorkspace mapOf("payload" to ForecastCache.read(context, forecastCacheKey()))
         ForecastCache.sync(context, forecastCacheKey(), {
             try { api.forecastStateSync() }
@@ -2894,10 +2927,8 @@ class FinanceRepository @Inject constructor(
     }
 
     suspend fun saveForecastState(payload: Map<String, Any?>): Map<String, Any?> = withWorkspace {
-        val before = ForecastCache.read(context, forecastCacheKey())
-        val after = ForecastCache.update(context, forecastCacheKey(), payload)
-        if (before != after && WorkspaceOperation.current().userId != 0) scheduleOfflineSync()
-        forecastState()
+        ForecastCache.update(context, forecastCacheKey(), payload)
+        mapOf("payload" to ForecastCache.read(context, forecastCacheKey()))
     }
 
     suspend fun askFinancialAi(

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -13,6 +14,7 @@ import '../../core/category_bank_visuals.dart';
 import '../../core/browser_download_stub.dart'
     if (dart.library.html) '../../core/browser_download_web.dart';
 import '../settings/app_settings_screen.dart';
+import '../settings/backup_sync_screen.dart';
 import '../settings/data_management_screen.dart';
 import '../tools/finance_tools_screen.dart';
 import '../planning/planning_screen.dart';
@@ -1214,6 +1216,17 @@ class _HomeScreenState extends State<HomeScreen> {
           onOnboarding: () {
             Navigator.pop(context);
             widget.onShowOnboarding();
+          },
+          onBackupSync: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => BackupSyncScreen(
+                  workspaceId: widget.workspace.id,
+                  snapshot: widget.snapshot,
+                  onRestored: widget.onSaveSnapshot,
+                ),
+              ),
+            );
           },
           onDataManagement: () {
             Navigator.pop(context);
@@ -4066,9 +4079,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             if (!widget.isGuest)
               ListTile(
+                enabled: kIsWeb,
                 leading: const Icon(Icons.account_balance_outlined),
-                title: const Text('Vincular Open Finance'),
-                onTap: () => Navigator.pop(c, 'openfinance'),
+                title: Text(kIsWeb ? 'Vincular Open Finance' : 'Open Finance — Em desenvolvimento'),
+                subtitle: kIsWeb ? null : const Text('Disponível em uma próxima versão'),
+                onTap: kIsWeb ? () => Navigator.pop(c, 'openfinance') : null,
               ),
           ],
         ),

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 import 'api_client.dart';
 
 String forecastId(dynamic value) => value is num ? value.toInt().toString() : value.toString().replaceFirst(RegExp(r'\.0$'), '');
@@ -73,6 +74,7 @@ class ForecastStore {
   });
 
   Future<void> sync(ApiClient api, String token) async {
+    if(!kIsWeb && defaultTargetPlatform==TargetPlatform.iOS) return;
     final previous = _syncs[key] ?? Future<void>.value();
     final next = previous.catchError((Object _) {}).then((_) async {
       final response = await api.forecastState(token,workspaceId);

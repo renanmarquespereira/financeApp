@@ -514,9 +514,10 @@ internal fun AccountsList(
                             onClick = { addAccountMenuExpanded = false; showNewManualAccount = true }
                         )
                         DropdownMenuItem(
-                            text = { Text("Open Finance") },
+                            text = { Text("Open Finance — Em desenvolvimento") },
                             leadingIcon = { Icon(Icons.Default.AccountBalance, contentDescription = null) },
-                            onClick = { addAccountMenuExpanded = false; onConnectBank() }
+                            enabled = false,
+                            onClick = { }
                         )
                     }
                 }

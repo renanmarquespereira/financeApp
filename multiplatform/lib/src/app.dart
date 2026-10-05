@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'core/api_client.dart';
 import 'core/local_finance_store.dart';
+import 'core/google_drive_backup.dart';
 import 'core/notification_service.dart';
 import 'core/models.dart';
 import 'core/session_store.dart';
@@ -20,10 +21,17 @@ bool _isPayableLinkedTransaction(FinancialTransaction t)=>t.externalTransactionI
 class FinanceApp extends StatefulWidget{const FinanceApp({super.key});@override State<FinanceApp> createState()=>_FinanceAppState();}
 class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
   Timer? _forecastTimer;
+  bool get _mobileLocalOnly => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
   bool _forecastRunning=false;
   @override void dispose(){_forecastTimer?.cancel();WidgetsBinding.instance.removeObserver(this);super.dispose();}
-  @override void didChangeAppLifecycleState(AppLifecycleState state){if(state==AppLifecycleState.resumed)_syncSavedCollections();}
+  @override void didChangeAppLifecycleState(AppLifecycleState state){
+    if(state==AppLifecycleState.resumed){
+      if(_mobileLocalOnly){GoogleDriveBackupService.runScheduledIfDue();}
+      else{_syncSavedCollections();}
+    }
+  }
   Future<void> _syncSavedCollections() async {
+    if(_mobileLocalOnly)return;
     if(_forecastRunning||guest||tokens==null||workspace==null)return;
     if(WidgetsBinding.instance.lifecycleState==AppLifecycleState.paused)return;
     _forecastRunning=true;
@@ -53,9 +61,17 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
     _bootstrap();
   }
 
-  Future<void> _bootstrap() async{final prefs=await SharedPreferences.getInstance();onboardingDone=prefs.getBool('financeapp_onboarding_v1_done')??false;final mode=await store.themeMode();themeMode=mode=='dark'?ThemeMode.dark:mode=='light'?ThemeMode.light:ThemeMode.system;guest=await store.guestMode();tokens=await store.readTokens();serverOk=await api.health();if(guest){workspace=guestWorkspace;workspaces=[guestWorkspace];await _loadLocal();}else if(tokens!=null){try{await _loadWorkspaces();await _loadLocal();if(serverOk)await _sync();}catch(_){if(workspace==null){await store.clear();tokens=null;}}}if(mounted)setState(()=>loading=false);}
+  Future<void> _bootstrap() async{final prefs=await SharedPreferences.getInstance();onboardingDone=prefs.getBool('financeapp_onboarding_v1_done')??false;final mode=await store.themeMode();themeMode=mode=='dark'?ThemeMode.dark:mode=='light'?ThemeMode.light:ThemeMode.system;guest=await store.guestMode();tokens=await store.readTokens();serverOk=await api.health();if(guest){workspace=guestWorkspace;workspaces=[guestWorkspace];await _loadLocal();}else if(tokens!=null){try{if(_mobileLocalOnly){await _loadMobileLocalWorkspace();await _loadLocal();await GoogleDriveBackupService.runScheduledIfDue();}else{await _loadWorkspaces();await _loadLocal();if(serverOk)await _sync();}}catch(_){if(workspace==null){await store.clear();tokens=null;}}}if(mounted)setState(()=>loading=false);}
   Future<void> _login(String email,String password) async=>_authenticate(()=>api.login(email,password));
-  Future<void> _authenticate(Future<AuthTokens> Function() action) async{setState((){busy=true;error=null;});try{tokens=await action();await store.saveTokens(tokens!);guest=false;serverOk=true;await _loadWorkspaces();await _loadLocal();await _sync();}catch(e){error=e.toString().replaceFirst('Exception: ','');}finally{if(mounted)setState(()=>busy=false);}}
+  Future<void> _loadMobileLocalWorkspace() async {
+    final prefs=await SharedPreferences.getInstance();
+    final savedId=(await store.workspaceId())??"mobile-local";
+    final savedName=prefs.getString("financeapp_local_workspace_name_$savedId")??"Meu espaço";
+    final localWorkspace=Workspace(id:savedId,name:savedName,kind:"personal",isDefault:true);
+    workspace=localWorkspace;workspaces=[localWorkspace];
+    await store.saveWorkspace(savedId);
+  }
+  Future<void> _authenticate(Future<AuthTokens> Function() action) async{setState((){busy=true;error=null;});try{tokens=await action();await store.saveTokens(tokens!);guest=false;serverOk=true;if(_mobileLocalOnly){await _loadMobileLocalWorkspace();await _loadLocal();await GoogleDriveBackupService.runScheduledIfDue();}else{await _loadWorkspaces();await _loadLocal();await _sync();}}catch(e){error=e.toString().replaceFirst('Exception: ','');}finally{if(mounted)setState(()=>busy=false);}}
   Future<void> _google() async{const clientId=String.fromEnvironment('GOOGLE_CLIENT_ID',defaultValue:'152655487934-rps2j6acpa2btg0cg7itlqrt5vjunrp6.apps.googleusercontent.com');try{final g=GoogleSignIn(clientId:clientId.isEmpty?null:clientId,serverClientId:clientId.isEmpty?null:clientId,scopes:const['email','profile']);final account=await g.signIn();if(account==null)return;final auth=await account.authentication;final id=auth.idToken;if(id==null)throw Exception('Google não retornou um ID token. Configure GOOGLE_CLIENT_ID para Web/iOS.');await _authenticate(()=>api.googleLogin(id));}catch(e){if(mounted)setState(()=>error='Não foi possível entrar com Google: ${e.toString().replaceFirst('Exception: ','')}');}}
   Future<String> _register({required String name,required String cpf,required String email,required String birthDate,required String sex,required String password})=>api.register(name:name,cpf:cpf,email:email,birthDate:birthDate,sex:sex,password:password);
   Future<String> _forgot(String email)=>api.forgotPassword(email); Future<String> _reset(String email,String code,String password)=>api.resetPassword(email,code,password);
@@ -122,7 +138,7 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
     // No Web autenticado, o servidor e sempre a fonte de verdade. Nunca recarrega
     // um snapshot financeiro antigo do SharedPreferences/LocalStorage do navegador.
     // Guest continua local; iOS/desktop ainda podem usar cache quando realmente offline.
-    if (!guest && tokens != null && (kIsWeb || serverOk)) {
+    if (!_mobileLocalOnly && !guest && tokens != null && (kIsWeb || serverOk)) {
       snapshot = FinancialSnapshot.empty();
     } else {
       snapshot = await local.read(workspace!.id);
@@ -131,6 +147,7 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
     await _syncNotifications();
   }
   Future<void> _sync() async {
+    if (_mobileLocalOnly) return;
     if (guest || tokens == null || workspace == null || syncing) return;
 
     final requestedWorkspaceId = workspace!.id;
@@ -237,7 +254,7 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
       }
     }
   }
-  bool get _canSync => !guest && tokens != null && workspace != null;
+  bool get _canSync => !_mobileLocalOnly && !guest && tokens != null && workspace != null;
   int? _serverId(int? id) => id == null ? null : (_serverIds[id] ?? id);
 
   Future<void> _saveSnapshot(FinancialSnapshot value) async {
@@ -408,7 +425,7 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
   Future<void> _deleteAccount(int id) async {
     // A API exige o fluxo próprio de código por e-mail para excluir uma conta.
     // Não removemos apenas localmente quando autenticado, pois isso faria Web e servidor divergirem.
-    if(!guest&&tokens!=null)throw Exception('Para excluir uma conta bancária autenticada, use Gerenciar dados e confirme o código enviado por e-mail.');
+    if(!guest&&tokens!=null&&!_mobileLocalOnly)throw Exception('Para excluir uma conta bancária autenticada, use Gerenciar dados e confirme o código enviado por e-mail.');
     await _saveLocalOnly(snapshot.copyWith(accounts:snapshot.accounts.where((e)=>e.id!=id).toList()));
   }
 
@@ -443,6 +460,9 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
 
   Future<String> _askAi(String question,Map<String,dynamic> summary) async {if(tokens==null||workspace==null)throw Exception('Entre com uma conta para usar a IA.');return api.askFinancialAi(tokens!.accessToken,workspace!.id,question,summary);}
   Future<void> _select(Workspace value) async {
+    if(_mobileLocalOnly){
+      await store.saveWorkspace(value.id);workspace=value;snapshot=await local.read(value.id);if(mounted)setState((){});return;
+    }
     await store.saveWorkspace(value.id);
     setState(() {
       workspace = value;
@@ -461,6 +481,14 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
   }
 
   Future<void> _createWorkspace(String name, String kind) async {
+    if (_mobileLocalOnly) {
+      final id=_newWorkspaceUuid();
+      final created=Workspace(id:id,name:name.trim(),kind:kind,isDefault:false);
+      final prefs=await SharedPreferences.getInstance();
+      await prefs.setString("financeapp_local_workspace_name_$id",created.name);
+      workspaces=[...workspaces,created];workspace=created;await store.saveWorkspace(id);
+      snapshot=FinancialSnapshot.empty();await local.save(id,snapshot);if(mounted)setState((){});return;
+    }
     if (tokens == null) throw Exception('Entre com sua conta para criar um workspace.');
     final clientId = _newWorkspaceUuid();
     final created = await api.createWorkspace(tokens!.accessToken,name:name,kind:kind,clientId:clientId);
@@ -480,6 +508,7 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
     await _sync();
   }
   Future<void> _reloadWorkspaces() async {
+    if(_mobileLocalOnly){if(mounted)setState((){});return;}
     if(tokens==null)return;
     final rows=await api.workspaces(tokens!.accessToken);
     final current=workspace;

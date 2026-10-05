@@ -150,7 +150,7 @@ class HomeViewModel @Inject constructor(
                     count ->
                 _state.value =
                     _state.value.copy(
-                        pendingSyncCount = count
+                        pendingSyncCount = 0
                     )
             }
         }

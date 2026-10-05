@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../core/api_client.dart';
 import '../../core/models.dart';
@@ -104,8 +105,9 @@ class _DataManagementScreenState extends State<DataManagementScreen>{
   Future<bool> _confirmGuest(String message) async=>await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Confirmar exclusão'),content:Text(message),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancelar')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Apagar'))]))??false;
   Future<void> _execute(Map<String,dynamic> options,{required String label,required bool deleteAccount}) async{
     if(busy)return;
-    if(widget.isGuest){
-      if(deleteAccount){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('O modo sem cadastro não possui conta de usuário para excluir.')));return;}
+    final localMobile=!kIsWeb&&defaultTargetPlatform==TargetPlatform.iOS;
+    if(widget.isGuest||localMobile){
+      if(deleteAccount){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('A conta de login não é removida por esta tela; os dados financeiros locais podem ser apagados abaixo.')));return;}
       if(!await _confirmGuest('$label será removido deste dispositivo/navegador.'))return;
       setState(()=>busy=true);var s=widget.snapshot;
       if(options['transactions']==true)s=s.copyWith(transactions:[]);if(options['accounts']==true)s=s.copyWith(accounts:[]);if(options['cards']==true)s=s.copyWith(cards:[]);if(options['categories']==true)s=s.copyWith(categories:[]);if(options['budgets']==true)s=s.copyWith(budgets:[]);if(options['goals']==true)s=s.copyWith(goals:[]);
