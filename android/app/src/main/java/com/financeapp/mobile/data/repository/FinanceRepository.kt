@@ -2857,42 +2857,213 @@ class FinanceRepository @Inject constructor(
         val pendingOperations: List<PendingSyncOperationEntity> = emptyList()
     )
 
+    data class WorkspaceFinanceBackupPayload(
+        val workspace: WorkspaceEntity,
+        val accounts: List<AccountEntity>,
+        val transactions: List<TransactionEntity>,
+        val categories: List<CategoryEntity>,
+        val cards: List<CreditCardEntity>,
+        val goals: List<GoalEntity>,
+        val budgets: List<BudgetEntity>,
+        val contributions: List<GoalContributionEntity>,
+        val debtPrefs: Map<String, Any?> = emptyMap()
+    )
+
+    data class FinanceBackupV3(
+        val format: String = "financeapp-backup-v3",
+        val createdAt: Long = System.currentTimeMillis(),
+        val workspaces: List<WorkspaceFinanceBackupPayload>
+    )
     suspend fun exportBackupJson(): String = withWorkspace {
-        val ws = WorkspaceOperation.current().workspaceId
-        val debtPrefs = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE).all
-            .filterKeys { it.endsWith("_$ws") }
-            .mapValues { it.value }
-        Gson().toJson(FinanceBackupPayload(
-            accounts=dao.backupAccounts(), transactions=dao.backupTransactions(), categories=dao.backupCategories(),
-            cards=dao.backupCards(), goals=dao.backupGoals(), budgets=dao.backupBudgets(), contributions=dao.backupGoalContributions(),
-            debtPrefs=debtPrefs, pendingOperations=emptyList()
-        ))
+        val scope = WorkspaceOperation.current()
+        val debtPrefsAll = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE).all
+        val localWorkspaces = dao.workspacesForUser(scope.userId)
+            .filter { it.archivedAt == null }
+            .ifEmpty {
+                listOf(
+                    WorkspaceEntity(
+                        userId = scope.userId,
+                        id = scope.workspaceId,
+                        name = "Meu espaço",
+                        kind = "personal",
+                        isDefault = true,
+                        archivedAt = null
+                    )
+                )
+            }
+
+        val payloads = localWorkspaces.map { ws ->
+            WorkspaceFinanceBackupPayload(
+                workspace = ws,
+                accounts = dao.backupAccounts(scope.userId, ws.id),
+                transactions = dao.backupTransactions(scope.userId, ws.id),
+                categories = dao.backupCategories(scope.userId, ws.id),
+                cards = dao.backupCards(scope.userId, ws.id),
+                goals = dao.backupGoals(scope.userId, ws.id),
+                budgets = dao.backupBudgets(scope.userId, ws.id),
+                contributions = dao.backupGoalContributions(scope.userId, ws.id),
+                debtPrefs = debtPrefsAll
+                    .filterKeys { it.endsWith("_${ws.id}") }
+                    .mapValues { it.value }
+            )
+        }
+        Gson().toJson(FinanceBackupV3(workspaces = payloads))
     }
 
-    suspend fun restoreBackupJson(raw: String): Int = withWorkspace {
-        val payload = Gson().fromJson(raw, FinanceBackupPayload::class.java)
-        require(payload.format == "financeapp-backup-v1") { "Arquivo de backup incompatível" }
-        val scope=WorkspaceOperation.current()
-        database.withTransaction {
-            dao.clearPendingOperations(); dao.clearTransactions(); dao.clearAccountsForRestore(); dao.clearCategories(); dao.clearCards(); dao.clearGoals(); dao.clearBudgets(); dao.clearGoalContributions()
-            dao.upsertAccounts(payload.accounts.map { it.copy(userId=scope.userId,workspaceId=scope.workspaceId) })
-            dao.upsertCategories(payload.categories.map { it.copy(userId=scope.userId,workspaceId=scope.workspaceId) })
-            dao.upsertCards(payload.cards.map { it.copy(userId=scope.userId,workspaceId=scope.workspaceId) })
-            dao.upsertTransactions(payload.transactions.map { it.copy(userId=scope.userId,workspaceId=scope.workspaceId) })
-            dao.upsertGoals(payload.goals.map { it.copy(userId=scope.userId,workspaceId=scope.workspaceId) })
-            payload.budgets.forEach { dao.upsertBudget(it.copy(userId=scope.userId,workspaceId=scope.workspaceId)) }
-            payload.contributions.forEach { dao.upsertGoalContribution(it.copy(userId=scope.userId,workspaceId=scope.workspaceId)) }
-            // A fila antiga de sincronizacao com servidor nao e restaurada no modo local-first.
-        }
-        val debtEditor = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE).edit()
-        payload.debtPrefs.forEach { (key, value) ->
-            when (value) {
-                is String -> debtEditor.putString(key, value)
-                is Collection<*> -> debtEditor.putStringSet(key, value.mapNotNull { it?.toString() }.toSet())
+    suspend fun restoreBackupJson(raw: String, mode: String = "replace"): Int = withWorkspace {
+        val root = com.google.gson.JsonParser.parseString(raw).asJsonObject
+        val format = root.get("format")?.asString.orEmpty()
+        val currentScope = WorkspaceOperation.current()
+        val normalizedMode = mode.lowercase(Locale.ROOT)
+        require(normalizedMode == "merge" || normalizedMode == "replace") { "Modo de restauração inválido" }
+
+        if (format == "financeapp-backup-v1") {
+            val payload = Gson().fromJson(raw, FinanceBackupPayload::class.java)
+            if (normalizedMode == "replace") {
+                database.withTransaction {
+                    dao.clearPendingOperations()
+                    dao.clearTransactions()
+                    dao.clearAccountsForRestore()
+                    dao.clearCategories()
+                    dao.clearCards()
+                    dao.clearGoals()
+                    dao.clearBudgets()
+                    dao.clearGoalContributions()
+                    dao.upsertAccounts(payload.accounts.map { it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) })
+                    dao.upsertCategories(payload.categories.map { it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) })
+                    dao.upsertCards(payload.cards.map { it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) })
+                    dao.upsertTransactions(payload.transactions.map { it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) })
+                    dao.upsertGoals(payload.goals.map { it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) })
+                    dao.upsertBudgets(payload.budgets.map { it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) })
+                    dao.upsertGoalContributions(payload.contributions.map { it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) })
+                }
+            } else {
+                database.withTransaction {
+                    val accounts = dao.backupAccounts().associateBy { it.id }.toMutableMap()
+                    payload.accounts.forEach { if (!accounts.containsKey(it.id)) accounts[it.id] = it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) }
+                    dao.upsertAccounts(accounts.values.toList())
+                    val categories = dao.backupCategories().associateBy { it.id }.toMutableMap()
+                    payload.categories.forEach { if (!categories.containsKey(it.id)) categories[it.id] = it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) }
+                    dao.upsertCategories(categories.values.toList())
+                    val cards = dao.backupCards().associateBy { it.id }.toMutableMap()
+                    payload.cards.forEach { if (!cards.containsKey(it.id)) cards[it.id] = it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) }
+                    dao.upsertCards(cards.values.toList())
+                    val txs = dao.backupTransactions().associateBy { it.id }.toMutableMap()
+                    payload.transactions.forEach { if (!txs.containsKey(it.id)) txs[it.id] = it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) }
+                    dao.upsertTransactions(txs.values.toList())
+                    val goals = dao.backupGoals().associateBy { it.id }.toMutableMap()
+                    payload.goals.forEach { if (!goals.containsKey(it.id)) goals[it.id] = it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) }
+                    dao.upsertGoals(goals.values.toList())
+                    val budgets = dao.backupBudgets().associateBy { it.categoryId }.toMutableMap()
+                    payload.budgets.forEach { if (!budgets.containsKey(it.categoryId)) budgets[it.categoryId] = it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) }
+                    dao.upsertBudgets(budgets.values.toList())
+                    val contributions = dao.backupGoalContributions().associateBy { it.id }.toMutableMap()
+                    payload.contributions.forEach { if (!contributions.containsKey(it.id)) contributions[it.id] = it.copy(userId=currentScope.userId,workspaceId=currentScope.workspaceId) }
+                    dao.upsertGoalContributions(contributions.values.toList())
+                }
             }
+            val editor = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE).edit()
+            payload.debtPrefs.forEach { (key, value) ->
+                when (value) {
+                    is String -> editor.putString(key, value)
+                    is Collection<*> -> editor.putStringSet(key, value.mapNotNull { it?.toString() }.toSet())
+                }
+            }
+            editor.apply()
+            return@withWorkspace payload.transactions.size + payload.accounts.size + payload.categories.size + payload.cards.size + payload.goals.size + payload.budgets.size + payload.contributions.size
         }
-        debtEditor.apply()
-        payload.transactions.size + payload.accounts.size + payload.categories.size + payload.cards.size + payload.goals.size + payload.budgets.size + payload.contributions.size
+
+        require(format == "financeapp-backup-v3") { "Arquivo de backup incompatível" }
+        val backup = Gson().fromJson(raw, FinanceBackupV3::class.java)
+        require(backup.workspaces.isNotEmpty()) { "O backup não contém workspaces" }
+        val backupIds = backup.workspaces.map { it.workspace.id }.toSet()
+        val existingWorkspaces = dao.workspacesForUser(currentScope.userId)
+        val debtPrefs = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE)
+
+        if (normalizedMode == "replace") {
+            database.withTransaction {
+                existingWorkspaces.forEach { ws ->
+                    dao.clearPendingOperations(currentScope.userId, ws.id)
+                    dao.clearTransactions(currentScope.userId, ws.id)
+                    dao.clearAccountsForRestore(currentScope.userId, ws.id)
+                    dao.clearCategories(currentScope.userId, ws.id)
+                    dao.clearCards(currentScope.userId, ws.id)
+                    dao.clearGoals(currentScope.userId, ws.id)
+                    dao.clearBudgets(currentScope.userId, ws.id)
+                    dao.clearGoalContributions(currentScope.userId, ws.id)
+                    if (ws.id !in backupIds) dao.deleteWorkspace(currentScope.userId, ws.id)
+                }
+                dao.upsertWorkspaces(backup.workspaces.map { it.workspace.copy(userId = currentScope.userId, archivedAt = null) })
+            }
+            val clean = debtPrefs.edit()
+            debtPrefs.all.keys.filter { key -> existingWorkspaces.any { key.endsWith("_${it.id}") } }.forEach { clean.remove(it) }
+            clean.apply()
+        } else {
+            dao.upsertWorkspaces(backup.workspaces.map { it.workspace.copy(userId = currentScope.userId, archivedAt = null) })
+        }
+
+        var restored = 0
+        for (wsBackup in backup.workspaces) {
+            val wsId = wsBackup.workspace.id
+            database.withTransaction {
+                if (normalizedMode == "replace") {
+                    dao.clearPendingOperations(currentScope.userId, wsId)
+                    dao.clearTransactions(currentScope.userId, wsId)
+                    dao.clearAccountsForRestore(currentScope.userId, wsId)
+                    dao.clearCategories(currentScope.userId, wsId)
+                    dao.clearCards(currentScope.userId, wsId)
+                    dao.clearGoals(currentScope.userId, wsId)
+                    dao.clearBudgets(currentScope.userId, wsId)
+                    dao.clearGoalContributions(currentScope.userId, wsId)
+                    dao.upsertAccounts(wsBackup.accounts.map { it.copy(userId=currentScope.userId,workspaceId=wsId) })
+                    dao.upsertCategories(wsBackup.categories.map { it.copy(userId=currentScope.userId,workspaceId=wsId) })
+                    dao.upsertCards(wsBackup.cards.map { it.copy(userId=currentScope.userId,workspaceId=wsId) })
+                    dao.upsertTransactions(wsBackup.transactions.map { it.copy(userId=currentScope.userId,workspaceId=wsId) })
+                    dao.upsertGoals(wsBackup.goals.map { it.copy(userId=currentScope.userId,workspaceId=wsId) })
+                    dao.upsertBudgets(wsBackup.budgets.map { it.copy(userId=currentScope.userId,workspaceId=wsId) })
+                    dao.upsertGoalContributions(wsBackup.contributions.map { it.copy(userId=currentScope.userId,workspaceId=wsId) })
+                } else {
+                    val accounts = dao.backupAccounts(currentScope.userId, wsId).associateBy { it.id }.toMutableMap()
+                    wsBackup.accounts.forEach { if (!accounts.containsKey(it.id)) accounts[it.id] = it.copy(userId=currentScope.userId,workspaceId=wsId) }
+                    dao.upsertAccounts(accounts.values.toList())
+                    val categories = dao.backupCategories(currentScope.userId, wsId).associateBy { it.id }.toMutableMap()
+                    wsBackup.categories.forEach { if (!categories.containsKey(it.id)) categories[it.id] = it.copy(userId=currentScope.userId,workspaceId=wsId) }
+                    dao.upsertCategories(categories.values.toList())
+                    val cards = dao.backupCards(currentScope.userId, wsId).associateBy { it.id }.toMutableMap()
+                    wsBackup.cards.forEach { if (!cards.containsKey(it.id)) cards[it.id] = it.copy(userId=currentScope.userId,workspaceId=wsId) }
+                    dao.upsertCards(cards.values.toList())
+                    val txs = dao.backupTransactions(currentScope.userId, wsId).associateBy { it.id }.toMutableMap()
+                    wsBackup.transactions.forEach { if (!txs.containsKey(it.id)) txs[it.id] = it.copy(userId=currentScope.userId,workspaceId=wsId) }
+                    dao.upsertTransactions(txs.values.toList())
+                    val goals = dao.backupGoals(currentScope.userId, wsId).associateBy { it.id }.toMutableMap()
+                    wsBackup.goals.forEach { if (!goals.containsKey(it.id)) goals[it.id] = it.copy(userId=currentScope.userId,workspaceId=wsId) }
+                    dao.upsertGoals(goals.values.toList())
+                    val budgets = dao.backupBudgets(currentScope.userId, wsId).associateBy { it.categoryId }.toMutableMap()
+                    wsBackup.budgets.forEach { if (!budgets.containsKey(it.categoryId)) budgets[it.categoryId] = it.copy(userId=currentScope.userId,workspaceId=wsId) }
+                    dao.upsertBudgets(budgets.values.toList())
+                    val contributions = dao.backupGoalContributions(currentScope.userId, wsId).associateBy { it.id }.toMutableMap()
+                    wsBackup.contributions.forEach { if (!contributions.containsKey(it.id)) contributions[it.id] = it.copy(userId=currentScope.userId,workspaceId=wsId) }
+                    dao.upsertGoalContributions(contributions.values.toList())
+                }
+            }
+
+            val editor = debtPrefs.edit()
+            wsBackup.debtPrefs.forEach { (key, value) ->
+                if (normalizedMode == "merge" && debtPrefs.contains(key)) return@forEach
+                when (value) {
+                    is String -> editor.putString(key, value)
+                    is Collection<*> -> editor.putStringSet(key, value.mapNotNull { it?.toString() }.toSet())
+                }
+            }
+            editor.apply()
+            restored += wsBackup.transactions.size + wsBackup.accounts.size + wsBackup.categories.size + wsBackup.cards.size + wsBackup.goals.size + wsBackup.budgets.size + wsBackup.contributions.size
+        }
+
+        if (currentScope.workspaceId !in backupIds) {
+            val preferred = backup.workspaces.firstOrNull { it.workspace.isDefault } ?: backup.workspaces.first()
+            session.activateWorkspace(WorkspaceScope(currentScope.userId, preferred.workspace.id))
+        }
+        restored
     }
 
     private fun forecastCacheKey(): String = WorkspaceOperation.current().let { "${it.userId}:${it.workspaceId}" }

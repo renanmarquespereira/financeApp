@@ -51,6 +51,21 @@ private const val KEY_LAST = "last_backup_at"
 
 private fun Context.backupPrefs() = getSharedPreferences(BACKUP_PREFS, Context.MODE_PRIVATE)
 
+data class FinanceBackupStatus(
+    val intervalDays: Int,
+    val lastBackupAt: Long,
+    val hasAutomaticDestination: Boolean
+)
+
+fun readFinanceBackupStatus(context: Context): FinanceBackupStatus {
+    val prefs = context.backupPrefs()
+    return FinanceBackupStatus(
+        intervalDays = prefs.getInt(KEY_INTERVAL, 0),
+        lastBackupAt = prefs.getLong(KEY_LAST, 0L),
+        hasAutomaticDestination = !prefs.getString(KEY_URI, null).isNullOrBlank()
+    )
+}
+
 private fun formatBackupTime(epoch: Long): String {
     if (epoch <= 0L) return "Ainda não realizado"
     return runCatching {
@@ -106,7 +121,7 @@ fun BackupAutoRunner(
 fun BackupSyncDialog(
     onDismiss: () -> Unit,
     onExportBackup: suspend () -> String,
-    onRestoreBackup: suspend (String) -> Int
+    onRestoreBackup: suspend (String, String) -> Int
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -117,6 +132,7 @@ fun BackupSyncDialog(
     var message by remember { mutableStateOf<String?>(null) }
     var selectedManageUri by remember { mutableStateOf<Uri?>(null) }
     var pendingAutomaticDays by remember { mutableStateOf<Int?>(null) }
+    var pendingRestoreRaw by remember { mutableStateOf<String?>(null) }
     var intervalExpanded by remember { mutableStateOf(false) }
 
     val manualBackupLauncher = rememberLauncherForActivityResult(
@@ -176,14 +192,13 @@ fun BackupSyncDialog(
         if (uri != null) {
             if (!isGoogleDriveUri(uri)) { message = "Selecione um backup no Google Drive."; return@rememberLauncherForActivityResult }
             scope.launch {
-            busy = true
-            runCatching {
-                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    ?: error("Não foi possível ler o arquivo de backup.")
-                onRestoreBackup(raw)
-            }.onSuccess { count -> message = "Backup restaurado: $count registros." }
-                .onFailure { message = it.message ?: "Não foi possível restaurar o backup." }
-            busy = false
+                busy = true
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                        ?: error("Não foi possível ler o arquivo de backup.")
+                }.onSuccess { raw -> pendingRestoreRaw = raw }
+                    .onFailure { message = it.message ?: "Não foi possível ler o backup." }
+                busy = false
             }
         }
     }
@@ -201,7 +216,7 @@ fun BackupSyncDialog(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    "Os dados financeiros ficam neste aparelho. O Google Drive é usado apenas para backup e restauração.",
+                    "O backup inclui todos os Workspaces e os dados financeiros deste aparelho. O Google Drive é usado apenas para backup e restauração.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(12.dp))
@@ -288,6 +303,48 @@ fun BackupSyncDialog(
         confirmButton = { Button(onClick = onDismiss, enabled = !busy) { Text("Concluir") } }
     )
 
+    pendingRestoreRaw?.let { raw ->
+        AlertDialog(
+            onDismissRequest = { pendingRestoreRaw = null },
+            title = { Text("Como deseja restaurar?") },
+            text = {
+                Column {
+                    Text("Já existem dados neste aparelho. Escolha como o backup deve ser aplicado.")
+                    Spacer(Modifier.height(10.dp))
+                    Text("Manter dados existentes: preserva o que já existe e adiciona somente o que estiver faltando.", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Substituir pelos dados do backup: remove os dados locais e restaura exatamente o conteúdo do arquivo.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    pendingRestoreRaw = null
+                    scope.launch {
+                        busy = true
+                        runCatching { onRestoreBackup(raw, "merge") }
+                            .onSuccess { count -> message = "Backup mesclado: $count registros processados." }
+                            .onFailure { message = it.message ?: "Não foi possível restaurar." }
+                        busy = false
+                    }
+                }) { Text("Manter existentes") }
+            },
+            dismissButton = {
+                Column {
+                    TextButton(onClick = {
+                        pendingRestoreRaw = null
+                        scope.launch {
+                            busy = true
+                            runCatching { onRestoreBackup(raw, "replace") }
+                                .onSuccess { count -> message = "Backup restaurado: $count registros." }
+                                .onFailure { message = it.message ?: "Não foi possível restaurar." }
+                            busy = false
+                        }
+                    }) { Text("Substituir pelos dados do backup") }
+                    TextButton(onClick = { pendingRestoreRaw = null }) { Text("Cancelar") }
+                }
+            }
+        )
+    }
     selectedManageUri?.let { uri ->
         AlertDialog(
             onDismissRequest = { selectedManageUri = null },
@@ -301,7 +358,7 @@ fun BackupSyncDialog(
                         runCatching {
                             val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                                 ?: error("Não foi possível ler o backup.")
-                            onRestoreBackup(raw)
+                            run { pendingRestoreRaw = raw; 0 }
                         }.onSuccess { count -> message = "Backup restaurado: $count registros." }
                             .onFailure { message = it.message ?: "Não foi possível restaurar." }
                         busy = false

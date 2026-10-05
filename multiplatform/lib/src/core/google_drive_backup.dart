@@ -63,15 +63,38 @@ class GoogleDriveBackupService {
     return jsonDecode(create.body)['id'].toString();
   }
 
+  Future<List<Workspace>> _localWorkspaces(String currentWorkspaceId) async {
+    final prefs=await SharedPreferences.getInstance();
+    final ids=<String>{currentWorkspaceId};
+    for(final key in prefs.getKeys()){
+      const prefix='financeapp_local_workspace_name_';
+      if(key.startsWith(prefix))ids.add(key.substring(prefix.length));
+    }
+    final result=<Workspace>[];
+    for(final id in ids){
+      final name=prefs.getString('financeapp_local_workspace_name_$id')??(id==currentWorkspaceId?'Meu espaço':'Workspace');
+      result.add(Workspace(id:id,name:name,kind:'personal',isDefault:id==currentWorkspaceId&&ids.length==1));
+    }
+    return result;
+  }
+
   Future<String> _backupJson(String workspaceId,FinancialSnapshot snapshot) async {
     final prefs=await SharedPreferences.getInstance();
-    final forecastRaw=prefs.getString('financeapp_forecast_v3_$workspaceId');
+    final all=await _localWorkspaces(workspaceId);
+    final rows=<Map<String,dynamic>>[];
+    for(final w in all){
+      final snap=w.id==workspaceId?snapshot:await LocalFinanceStore().read(w.id);
+      final forecastRaw=prefs.getString('financeapp_forecast_v3_${w.id}');
+      rows.add({
+        'workspace':{'id':w.id,'name':w.name,'kind':w.kind,'is_default':w.isDefault,'archived_at':w.archivedAt},
+        'snapshot':snap.toJson(),
+        'forecast_state':forecastRaw==null?null:jsonDecode(forecastRaw),
+      });
+    }
     return jsonEncode({
-      'format':'financeapp-mobile-backup-v2',
+      'format':'financeapp-backup-v3',
       'created_at':DateTime.now().toUtc().toIso8601String(),
-      'workspace_id':workspaceId,
-      'snapshot':snapshot.toJson(),
-      'forecast_state':forecastRaw==null?null:jsonDecode(forecastRaw),
+      'workspaces':rows,
     });
   }
 
@@ -119,23 +142,79 @@ class GoogleDriveBackupService {
     }).toList();
   }
 
-  Future<FinancialSnapshot> restore(String fileId,{GoogleSignInAccount? account}) async {
+  FinancialSnapshot _mergeSnapshots(FinancialSnapshot current,FinancialSnapshot incoming){
+    List<T> keepExisting<T,K>(List<T> existing,List<T> backup,K Function(T) key){
+      final map=<K,T>{for(final e in existing)key(e):e};
+      for(final e in backup){map.putIfAbsent(key(e),()=>e);}
+      return map.values.toList();
+    }
+    return FinancialSnapshot(
+      accounts:keepExisting(current.accounts,incoming.accounts,(e)=>e.id),
+      transactions:keepExisting(current.transactions,incoming.transactions,(e)=>e.id),
+      cards:keepExisting(current.cards,incoming.cards,(e)=>e.id),
+      categories:keepExisting(current.categories,incoming.categories,(e)=>e.id),
+      budgets:keepExisting(current.budgets,incoming.budgets,(e)=>e.categoryId),
+      goals:keepExisting(current.goals,incoming.goals,(e)=>e.id),
+      syncedAt:current.syncedAt??incoming.syncedAt,
+    );
+  }
+
+  Future<FinancialSnapshot> restore(String fileId,{GoogleSignInAccount? account,String mode='replace'}) async {
     account??=await connect();
     if(account==null)throw Exception('Conecte uma conta Google.');
     final h=await _headers(account);
     final r=await http.get(Uri.parse('https://www.googleapis.com/drive/v3/files/$fileId?alt=media'),headers:h);
     if(r.statusCode<200||r.statusCode>=300)throw Exception('Google Drive: ${r.body}');
     final body=Map<String,dynamic>.from(jsonDecode(r.body));
-    if(body['format']!='financeapp-mobile-backup-v2')throw Exception('Backup incompatível com esta versão do FinanceApp.');
-    final workspaceId=(await SessionStore().workspaceId())??body['workspace_id']?.toString();
-    if(workspaceId==null)throw Exception('Workspace local não identificado.');
-    final snapshot=FinancialSnapshot.fromJson(Map<String,dynamic>.from(body['snapshot'] as Map));
-    await LocalFinanceStore().save(workspaceId,snapshot);
-    if(body['forecast_state'] is Map){
-      final p=await SharedPreferences.getInstance();
-      await p.setString('financeapp_forecast_v3_$workspaceId',jsonEncode(body['forecast_state']));
+    final format=body['format']?.toString();
+    final currentId=(await SessionStore().workspaceId())??'mobile-local';
+    final prefs=await SharedPreferences.getInstance();
+
+    if(format=='financeapp-mobile-backup-v2'){
+      final incoming=FinancialSnapshot.fromJson(Map<String,dynamic>.from(body['snapshot'] as Map));
+      final current=await LocalFinanceStore().read(currentId);
+      final result=mode=='merge'?_mergeSnapshots(current,incoming):incoming;
+      await LocalFinanceStore().save(currentId,result);
+      if(body['forecast_state'] is Map){await prefs.setString('financeapp_forecast_v3_$currentId',jsonEncode(body['forecast_state']));}
+      return result;
     }
-    return snapshot;
+
+    if(format!='financeapp-backup-v3')throw Exception('Backup incompatível com esta versão do FinanceApp.');
+    final workspaces=(body['workspaces'] as List? ?? const[]);
+    if(workspaces.isEmpty)throw Exception('O backup não contém workspaces.');
+
+    final backupIds=<String>{};
+    for(final rowRaw in workspaces){
+      final row=Map<String,dynamic>.from(rowRaw as Map);
+      final wm=Map<String,dynamic>.from(row['workspace'] as Map);
+      final id=wm['id'].toString();
+      backupIds.add(id);
+      final name=(wm['name']??'Workspace').toString();
+      await prefs.setString('financeapp_local_workspace_name_$id',name);
+      final incoming=FinancialSnapshot.fromJson(Map<String,dynamic>.from(row['snapshot'] as Map));
+      final current=await LocalFinanceStore().read(id);
+      final result=mode=='merge'?_mergeSnapshots(current,incoming):incoming;
+      await LocalFinanceStore().save(id,result);
+      if(row['forecast_state'] is Map){await prefs.setString('financeapp_forecast_v3_$id',jsonEncode(row['forecast_state']));}
+    }
+
+    if(mode=='replace'){
+      final known=await _localWorkspaces(currentId);
+      for(final w in known.where((e)=>!backupIds.contains(e.id))){
+        await prefs.remove('finance_snapshot_v2_${w.id}');
+        await prefs.remove('finance_snapshot_${w.id}');
+        await prefs.remove('financeapp_local_workspace_name_${w.id}');
+        await prefs.remove('financeapp_forecast_v3_${w.id}');
+      }
+    }
+
+    var selectedId=currentId;
+    if(!backupIds.contains(selectedId)){
+      final first=Map<String,dynamic>.from(workspaces.first as Map);
+      selectedId=Map<String,dynamic>.from(first['workspace'] as Map)['id'].toString();
+      await SessionStore().saveWorkspace(selectedId);
+    }
+    return LocalFinanceStore().read(selectedId);
   }
 
   Future<void> delete(String fileId,{GoogleSignInAccount? account}) async {

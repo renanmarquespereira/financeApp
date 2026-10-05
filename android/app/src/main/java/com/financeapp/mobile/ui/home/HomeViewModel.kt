@@ -293,8 +293,8 @@ class HomeViewModel @Inject constructor(
 
     suspend fun exportBackupJson(): String = repository.exportBackupJson()
 
-    suspend fun restoreBackupJson(raw: String): Int {
-        val count = repository.restoreBackupJson(raw)
+    suspend fun restoreBackupJson(raw: String, mode: String): Int {
+        val count = repository.restoreBackupJson(raw, mode)
         _state.value = _state.value.copy(message = "Backup restaurado: $count registros", error = null)
         return count
     }

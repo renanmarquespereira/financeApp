@@ -533,9 +533,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          if (!widget.isGuest)
+          if (!widget.isGuest && kIsWeb)
             IconButton(
-              tooltip: 'Sincronizar',
+              tooltip: 'Atualizar dados da versão Web',
               onPressed: widget.syncing ? null : widget.onSync,
               icon: widget.syncing
                   ? const SizedBox.square(

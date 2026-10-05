@@ -198,7 +198,7 @@ fun HomeScreen(
         (String, String) -> Unit,
     onSync: () -> Unit,
     onExportBackup: suspend () -> String,
-    onRestoreBackup: suspend (String) -> Int,
+    onRestoreBackup: suspend (String, String) -> Int,
     onCreateManual: (
         Int?,
         Int?,
@@ -438,7 +438,6 @@ fun HomeScreen(
     }
     var showSettings by remember { mutableStateOf(false) }
     var showBackupSyncDialog by remember { mutableStateOf(false) }
-    var showSyncCenter by remember { mutableStateOf(false) }
     var showAttentionCenter by remember { mutableStateOf(false) }
     var attentionOldestFirstRequest by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -623,7 +622,7 @@ fun HomeScreen(
         count
     }
     val attentionTotal = attentionUncategorizedCount + attentionDuplicateCount +
-        state.pendingSyncCount + attentionCardsMissingDue + attentionUpcomingDue
+        attentionCardsMissingDue + attentionUpcomingDue
 
     Scaffold(
         topBar = {
@@ -736,14 +735,6 @@ fun HomeScreen(
                                     Icon(Icons.Default.Notifications, contentDescription = "Central de pendências")
                                 }
                             }
-                            SyncStatusChip(
-                                pendingCount = state.pendingSyncCount,
-                                syncing = state.offlineSyncing,
-                                isOnline = isOnline,
-                                serverAvailable = state.serverAvailable,
-                                modifier = Modifier.padding(end = 4.dp),
-                                onClick = { showSyncCenter = true }
-                            )
                         }
 
                         Surface(shape=androidx.compose.foundation.shape.CircleShape, color=MaterialTheme.colorScheme.primaryContainer, modifier=Modifier.padding(end=8.dp)) {
@@ -1220,7 +1211,6 @@ fun HomeScreen(
         AttentionCenterDialog(
             uncategorizedCount = attentionUncategorizedCount,
             duplicateCount = attentionDuplicateCount,
-            pendingSyncCount = state.pendingSyncCount,
             cardsMissingDue = attentionCardsMissingDue,
             upcomingDueCount = attentionUpcomingDue,
             onOpenUncategorized = {
@@ -1236,21 +1226,9 @@ fun HomeScreen(
                 searchQuery = ""
                 selectedTab = HomeTab.TRANSACTIONS
             },
-            onOpenSync = { showAttentionCenter = false; showSyncCenter = true },
             onOpenCards = { showAttentionCenter = false; selectedTab = HomeTab.ACCOUNTS },
             onOpenInvoices = { showAttentionCenter = false; selectedTab = HomeTab.INVOICES },
             onDismiss = { showAttentionCenter = false }
-        )
-    }
-
-    if (showSyncCenter && !guest) {
-        SyncCenterDialog(
-            pendingCount = state.pendingSyncCount,
-            syncing = state.offlineSyncing,
-            serverAvailable = state.serverAvailable,
-            lastSyncAt = state.lastSyncAt,
-            onSyncNow = onSync,
-            onDismiss = { showSyncCenter = false }
         )
     }
 
@@ -1429,17 +1407,12 @@ fun HomeScreen(
     if (showDiagnostics) {
         DiagnosticsDialog(
             workspaceName = workspaceName,
-            lastSyncAt = state.lastSyncAt,
-            pendingSyncCount = state.pendingSyncCount,
-            syncing = state.offlineSyncing,
             serverAvailable = state.serverAvailable,
-            lastBackupAt = lastIndependentBackupAt,
-            transactions = transactions,
-            accounts = accounts,
-            categories = categories,
-            cards = cards,
-            onSyncNow = onRefresh,
-            onEditPersonal = { showSettings = false; backupScope.launch { runCatching { onLoadPersonalProfile() }.onSuccess { personalProfile = it; showEditPersonal = true }.onFailure { backupMessage = it.message ?: "Não foi possível carregar seus dados" } } },
+            backupStatus = readFinanceBackupStatus(appContext),
+            onOpenBackup = {
+                showDiagnostics = false
+                showBackupSyncDialog = true
+            },
             onDismiss = { showDiagnostics = false }
         )
     }
@@ -1504,7 +1477,13 @@ fun HomeScreen(
 
     if (showDeleteAllDataWarning) {
         val o = deleteDataOptions
-        val selectedCount = listOf(o.transactions, o.categories, o.cards,
+        val removableWorkspaceIds = workspaces.filter { !it.isDefault }.map { it.id }
+        val allAccountIds = accounts.map { it.id }
+        val allFinancialSelected =
+            o.transactions && o.categories && o.cards && o.budgets && o.goals && o.openFinance &&
+                (accounts.isEmpty() || allAccountIds.all { it in o.accountIds }) &&
+                removableWorkspaceIds.all { it in o.workspaceIds }
+        val selectedCount = listOf(o.transactions, o.categories, o.accounts, o.cards,
             o.budgets, o.goals, o.openFinance, o.deleteAccount).count { it } +
             o.workspaceIds.size + o.accountIds.size
         AlertDialog(
@@ -1563,11 +1542,32 @@ fun HomeScreen(
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                    option("Apagar todos os dados financeiros", false) { checked ->
-                        if (checked) deleteDataOptions = o.copy(
-                            transactions = true, categories = true, accounts = true, accountIds = emptyList(), cards = true,
-                            budgets = true, goals = true, openFinance = true
-                        )
+                    option("Apagar todos os dados financeiros", allFinancialSelected) { checked ->
+                        deleteDataOptions = if (checked) {
+                            o.copy(
+                                transactions = true,
+                                categories = true,
+                                accounts = true,
+                                accountIds = allAccountIds,
+                                cards = true,
+                                budgets = true,
+                                goals = true,
+                                openFinance = true,
+                                workspaceIds = removableWorkspaceIds
+                            )
+                        } else {
+                            o.copy(
+                                transactions = false,
+                                categories = false,
+                                accounts = false,
+                                accountIds = emptyList(),
+                                cards = false,
+                                budgets = false,
+                                goals = false,
+                                openFinance = false,
+                                workspaceIds = emptyList()
+                            )
+                        }
                     }
                     option("Excluir minha conta e login", o.deleteAccount) {
                         deleteDataOptions = o.copy(deleteAccount = it)
@@ -2538,44 +2538,37 @@ private fun ProfilePhotoCropDialog(bitmap: Bitmap, onDismiss: () -> Unit, onConf
 @Composable
 private fun DiagnosticsDialog(
     workspaceName: String,
-    lastSyncAt: String?,
-    pendingSyncCount: Int,
-    syncing: Boolean,
     serverAvailable: Boolean?,
-    lastBackupAt: Long,
-    transactions: List<TransactionEntity>,
-    accounts: List<AccountEntity>,
-    categories: List<CategoryDto>,
-    cards: List<CreditCardDto>,
-    onSyncNow: () -> Unit,
-    onEditPersonal: () -> Unit,
+    backupStatus: FinanceBackupStatus,
+    onOpenBackup: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var checkVersion by remember { mutableIntStateOf(0) }
-    val accountIds = remember(accounts, checkVersion) { accounts.map { it.id }.toSet() }
-    val categoryIds = remember(categories, checkVersion) { categories.map { it.id }.toSet() }
-    val orphanAccounts = remember(transactions, accountIds, checkVersion) {
-        transactions.count { it.accountId != null && it.accountId !in accountIds }
+    val formatter = remember { DateTimeFormatter.ofPattern("dd/MM/yyyy 'às' HH:mm") }
+    val lastBackupLabel = if (backupStatus.lastBackupAt > 0L) {
+        Instant.ofEpochMilli(backupStatus.lastBackupAt)
+            .atZone(ZoneId.systemDefault())
+            .format(formatter)
+    } else {
+        "Ainda não realizado"
     }
-    val orphanCategories = remember(transactions, categoryIds, checkVersion) {
-        transactions.count { it.categoryId != null && it.categoryId !in categoryIds }
+    val intervalLabel = when (backupStatus.intervalDays) {
+        7 -> "A cada 7 dias"
+        15 -> "A cada 15 dias"
+        30 -> "A cada 30 dias"
+        else -> "Desativado"
     }
-    val cardIds = remember(cards, checkVersion) { cards.map { it.id }.toSet() }
-    val orphanCards = remember(transactions, cardIds, checkVersion) {
-        transactions.count { it.cardId != null && it.cardId !in cardIds }
+    val nextBackupLabel = when {
+        backupStatus.intervalDays <= 0 -> "Backup automático desativado"
+        !backupStatus.hasAutomaticDestination -> "Destino do Google Drive ainda não configurado"
+        backupStatus.lastBackupAt <= 0L -> "Será definido após o primeiro backup"
+        else -> Instant.ofEpochMilli(
+            backupStatus.lastBackupAt + backupStatus.intervalDays * 86_400_000L
+        ).atZone(ZoneId.systemDefault()).format(formatter)
     }
-    val integrityIssues = orphanAccounts + orphanCategories + orphanCards
-    val syncLabel = lastSyncAt?.let { raw ->
-        runCatching { Instant.parse(raw).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd/MM/yyyy 'às' HH:mm")) }.getOrDefault(raw)
-    } ?: "Ainda não sincronizado"
-    val backupLabel = if (lastBackupAt > 0L) {
-        Instant.ofEpochMilli(lastBackupAt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd/MM/yyyy 'às' HH:mm"))
-    } else "Nenhum backup independente registrado neste aparelho"
-    val serverLabel = when {
-        syncing -> "Verificando / sincronizando"
-        serverAvailable == true -> "Conectado"
-        serverAvailable == false -> "Indisponível ou offline"
-        else -> "Ainda não verificado"
+    val serverLabel = when (serverAvailable) {
+        true -> "Conectado — serviços online disponíveis"
+        false -> "Indisponível ou offline"
+        null -> "Ainda não verificado"
     }
 
     AlertDialog(
@@ -2583,57 +2576,44 @@ private fun DiagnosticsDialog(
         icon = { Icon(Icons.Default.HealthAndSafety, null) },
         title = { Text("Diagnóstico e segurança") },
         text = {
-            Column(Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                Modifier.fillMaxWidth().heightIn(max = 500.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text("Workspace", style = MaterialTheme.typography.labelMedium)
                 Text(workspaceName.ifBlank { "Workspace" }, fontWeight = FontWeight.SemiBold)
                 HorizontalDivider()
-                val overallStatus = when {
-                    integrityIssues > 0 -> DiagnosticStatus.ERROR
-                    pendingSyncCount > 0 || serverAvailable != true || lastSyncAt == null || lastBackupAt <= 0L -> DiagnosticStatus.ATTENTION
-                    else -> DiagnosticStatus.SUCCESS
-                }
-                DiagnosticLine(
-                    "Estado geral",
-                    when (overallStatus) {
-                        DiagnosticStatus.SUCCESS -> "Tudo certo para uso"
-                        DiagnosticStatus.ATTENTION -> "Tudo seguro localmente, com pontos que merecem atenção"
-                        DiagnosticStatus.ERROR -> "Há inconsistências que precisam ser verificadas"
-                        DiagnosticStatus.INFO -> "Informativo"
-                    },
-                    overallStatus
-                )
-                HorizontalDivider()
-                DiagnosticLine("Banco local", "OK — dados disponíveis no aparelho", DiagnosticStatus.SUCCESS)
+                DiagnosticLine("Banco local", "OK — dados financeiros disponíveis neste aparelho", DiagnosticStatus.SUCCESS)
                 DiagnosticLine(
                     "Servidor",
                     serverLabel,
-                    when {
-                        syncing -> DiagnosticStatus.INFO
-                        serverAvailable == true -> DiagnosticStatus.SUCCESS
-                        serverAvailable == false -> DiagnosticStatus.ERROR
-                        else -> DiagnosticStatus.ATTENTION
+                    when (serverAvailable) {
+                        true -> DiagnosticStatus.SUCCESS
+                        false -> DiagnosticStatus.ERROR
+                        null -> DiagnosticStatus.ATTENTION
                     }
                 )
-                DiagnosticLine("Última sincronização", syncLabel, if (lastSyncAt != null) DiagnosticStatus.SUCCESS else DiagnosticStatus.ATTENTION)
-                DiagnosticLine(
-                    "Aguardando sincronização",
-                    if (pendingSyncCount == 0) "Nenhum item pendente" else "$pendingSyncCount item(ns) — os dados continuam salvos no aparelho",
-                    if (pendingSyncCount == 0) DiagnosticStatus.SUCCESS else DiagnosticStatus.ATTENTION
-                )
-                DiagnosticLine("Último backup independente", backupLabel, if (lastBackupAt > 0L) DiagnosticStatus.SUCCESS else DiagnosticStatus.ATTENTION)
                 HorizontalDivider()
-                Text("Integridade dos dados", style = MaterialTheme.typography.labelLarge)
-                if (integrityIssues == 0) {
-                    DiagnosticLine("Referências locais", "Nenhum problema encontrado", DiagnosticStatus.SUCCESS)
-                } else {
-                    DiagnosticLine("Referências locais", "$integrityIssues possível(is) inconsistência(s)", DiagnosticStatus.ERROR)
-                    if (orphanAccounts > 0) Text("• $orphanAccounts transação(ões) apontam para conta inexistente.", style = MaterialTheme.typography.bodySmall)
-                    if (orphanCategories > 0) Text("• $orphanCategories transação(ões) apontam para categoria inexistente.", style = MaterialTheme.typography.bodySmall)
-                    if (orphanCards > 0) Text("• $orphanCards transação(ões) apontam para cartão inexistente.", style = MaterialTheme.typography.bodySmall)
-                    Text("O diagnóstico não altera nem apaga dados automaticamente.", style = MaterialTheme.typography.bodySmall)
-                }
-                OutlinedButton(onClick = { checkVersion++; onSyncNow() }, enabled = !syncing, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text(if (syncing) "Verificando..." else "Verificar agora")
+                Text("Backup", style = MaterialTheme.typography.labelLarge)
+                DiagnosticLine(
+                    "Último backup",
+                    lastBackupLabel,
+                    if (backupStatus.lastBackupAt > 0L) DiagnosticStatus.SUCCESS else DiagnosticStatus.ATTENTION
+                )
+                DiagnosticLine(
+                    "Backup automático",
+                    intervalLabel,
+                    if (backupStatus.intervalDays > 0 && backupStatus.hasAutomaticDestination) DiagnosticStatus.SUCCESS else DiagnosticStatus.INFO
+                )
+                DiagnosticLine(
+                    "Próximo backup",
+                    nextBackupLabel,
+                    if (backupStatus.intervalDays > 0 && backupStatus.hasAutomaticDestination) DiagnosticStatus.INFO else DiagnosticStatus.ATTENTION
+                )
+                OutlinedButton(onClick = onOpenBackup, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.CloudUpload, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Abrir Backup e sincronização")
                 }
             }
         },
@@ -3012,17 +2992,15 @@ internal fun transactionMatchesSearch(
 private fun AttentionCenterDialog(
     uncategorizedCount: Int,
     duplicateCount: Int,
-    pendingSyncCount: Int,
     cardsMissingDue: Int,
     upcomingDueCount: Int,
     onOpenUncategorized: () -> Unit,
     onOpenDuplicates: () -> Unit,
-    onOpenSync: () -> Unit,
     onOpenCards: () -> Unit,
     onOpenInvoices: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val total = uncategorizedCount + duplicateCount + pendingSyncCount + cardsMissingDue + upcomingDueCount
+    val total = uncategorizedCount + duplicateCount + cardsMissingDue + upcomingDueCount
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(if (total > 0) Icons.Default.NotificationsActive else Icons.Default.CheckCircle, null) },
@@ -3039,7 +3017,6 @@ private fun AttentionCenterDialog(
                     Text("$total item(ns) pedem sua atenção.", fontWeight = FontWeight.SemiBold)
                     if (uncategorizedCount > 0) AttentionItem(Icons.Default.Category, "$uncategorizedCount transação(ões) sem categoria", "Ir para a mais antiga", onOpenUncategorized)
                     if (duplicateCount > 0) AttentionItem(Icons.Default.ContentCopy, "$duplicateCount possível(is) duplicidade(s)", "Comparar e conciliar", onOpenDuplicates)
-                    if (pendingSyncCount > 0) AttentionItem(Icons.Default.CloudUpload, "$pendingSyncCount alteração(ões) aguardando sincronização", "Abrir sincronização", onOpenSync)
                     if (cardsMissingDue > 0) AttentionItem(Icons.Default.CreditCard, "$cardsMissingDue cartão(ões) sem dia de vencimento", "Completar cadastro", onOpenCards)
                     if (upcomingDueCount > 0) AttentionItem(Icons.Default.Event, "$upcomingDueCount fatura(s) com valor em aberto e vencimento nos próximos 7 dias", "Ver faturas", onOpenInvoices)
                 }
@@ -3059,65 +3036,6 @@ private fun AttentionItem(icon: androidx.compose.ui.graphics.vector.ImageVector,
                 Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 TextButton(onClick = onClick, contentPadding = PaddingValues(0.dp)) { Text(action) }
             }
-        }
-    }
-}
-
-@Composable
-private fun SyncCenterDialog(
-    pendingCount: Int,
-    syncing: Boolean,
-    serverAvailable: Boolean?,
-    lastSyncAt: String?,
-    onSyncNow: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val status = when {
-        syncing -> "Sincronizando agora"
-        serverAvailable == false -> "Servidor indisponível no momento"
-        pendingCount > 0 -> "$pendingCount alterações aguardando envio"
-        else -> "Tudo sincronizado"
-    }
-    val last = lastSyncAt ?: "Ainda não informado"
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(if (pendingCount > 0) Icons.Default.CloudUpload else Icons.Default.CloudDone, null) },
-        title = { Text("Central de sincronização") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(status, fontWeight = FontWeight.SemiBold)
-                Text("Pendentes neste workspace: $pendingCount", style = MaterialTheme.typography.bodyMedium)
-                Text("Última sincronização: $last", style = MaterialTheme.typography.bodySmall)
-                if (serverAvailable == false) Text("Seus dados locais continuam disponíveis. O FinanceApp tentará novamente quando o servidor responder.", style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = { Button(onClick = onSyncNow, enabled = !syncing) { Icon(Icons.Default.Sync, null); Spacer(Modifier.width(6.dp)); Text("Sincronizar agora") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Fechar") } }
-    )
-}
-
-@Composable
-private fun SyncStatusChip(
-    pendingCount: Int, syncing: Boolean, isOnline: Boolean, serverAvailable: Boolean?, modifier: Modifier = Modifier, onClick: () -> Unit = {}
-) {
-    val icon = when {
-        !isOnline -> Icons.Default.CloudOff
-        syncing || serverAvailable == null -> Icons.Default.Sync
-        pendingCount > 0 -> Icons.Default.CloudUpload
-        serverAvailable == false -> Icons.Default.CloudOff
-        else -> Icons.Default.CloudDone
-    }
-    val description = when {
-        !isOnline -> "Offline"
-        syncing -> "Sincronizando"
-        pendingCount > 0 -> "$pendingCount alterações aguardando sincronização"
-        serverAvailable == false -> "Servidor temporariamente indisponível"
-        else -> "Sincronizado"
-    }
-    Surface(onClick=onClick, shape=MaterialTheme.shapes.large, color=MaterialTheme.colorScheme.surfaceVariant, modifier=modifier) {
-        Row(Modifier.padding(horizontal=7.dp, vertical=5.dp), verticalAlignment=Alignment.CenterVertically) {
-            Icon(icon, description, Modifier.size(17.dp))
-            if (pendingCount > 0) { Spacer(Modifier.width(4.dp)); Text(pendingCount.toString(), style=MaterialTheme.typography.labelSmall, fontWeight=FontWeight.Bold) }
         }
     }
 }

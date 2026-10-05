@@ -66,10 +66,23 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
   Future<void> _loadMobileLocalWorkspace() async {
     final prefs=await SharedPreferences.getInstance();
     final savedId=(await store.workspaceId())??"mobile-local";
-    final savedName=prefs.getString("financeapp_local_workspace_name_$savedId")??"Meu espaço";
-    final localWorkspace=Workspace(id:savedId,name:savedName,kind:"personal",isDefault:true);
-    workspace=localWorkspace;workspaces=[localWorkspace];
-    await store.saveWorkspace(savedId);
+    if(!prefs.containsKey("financeapp_local_workspace_name_$savedId")){
+      await prefs.setString("financeapp_local_workspace_name_$savedId","Meu espaço");
+    }
+    final ids=<String>{savedId};
+    for(final key in prefs.getKeys()){
+      const prefix="financeapp_local_workspace_name_";
+      if(key.startsWith(prefix))ids.add(key.substring(prefix.length));
+    }
+    final rows=ids.map((id)=>Workspace(
+      id:id,
+      name:prefs.getString("financeapp_local_workspace_name_$id")??"Workspace",
+      kind:"personal",
+      isDefault:id==savedId&&ids.length==1,
+    )).toList();
+    workspaces=rows;
+    workspace=rows.where((w)=>w.id==savedId).firstOrNull??rows.first;
+    await store.saveWorkspace(workspace!.id);
   }
   Future<void> _authenticate(Future<AuthTokens> Function() action) async{setState((){busy=true;error=null;});try{tokens=await action();await store.saveTokens(tokens!);guest=false;serverOk=true;if(_mobileLocalOnly){await _loadMobileLocalWorkspace();await _loadLocal();await GoogleDriveBackupService.runScheduledIfDue();}else{await _loadWorkspaces();await _loadLocal();await _sync();}}catch(e){error=e.toString().replaceFirst('Exception: ','');}finally{if(mounted)setState(()=>busy=false);}}
   Future<void> _google() async{const clientId=String.fromEnvironment('GOOGLE_CLIENT_ID',defaultValue:'152655487934-rps2j6acpa2btg0cg7itlqrt5vjunrp6.apps.googleusercontent.com');try{final g=GoogleSignIn(clientId:clientId.isEmpty?null:clientId,serverClientId:clientId.isEmpty?null:clientId,scopes:const['email','profile']);final account=await g.signIn();if(account==null)return;final auth=await account.authentication;final id=auth.idToken;if(id==null)throw Exception('Google não retornou um ID token. Configure GOOGLE_CLIENT_ID para Web/iOS.');await _authenticate(()=>api.googleLogin(id));}catch(e){if(mounted)setState(()=>error='Não foi possível entrar com Google: ${e.toString().replaceFirst('Exception: ','')}');}}

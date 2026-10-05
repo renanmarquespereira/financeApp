@@ -23,7 +23,17 @@ class _BackupSyncScreenState extends State<BackupSyncScreen>{
     final e=await GoogleDriveBackupService.accountEmail();
     if(mounted)setState((){interval=i;lastAt=l;email=e;});
   }
-  String get lastLabel=>lastAt<=0?'Ainda não realizado':DateTime.fromMillisecondsSinceEpoch(lastAt).toLocal().toString().substring(0,16).replaceFirst('T',' ');
+  String _dateLabel(DateTime value){
+    String two(int v)=>v.toString().padLeft(2,'0');
+    final d=value.toLocal();
+    return '${two(d.day)}/${two(d.month)}/${d.year} às ${two(d.hour)}:${two(d.minute)}';
+  }
+  String get lastLabel=>lastAt<=0?'Ainda não realizado':_dateLabel(DateTime.fromMillisecondsSinceEpoch(lastAt));
+  String get nextLabel{
+    if(interval<=0)return 'Backup automático desativado';
+    if(lastAt<=0)return 'Será definido após o primeiro backup';
+    return _dateLabel(DateTime.fromMillisecondsSinceEpoch(lastAt).add(Duration(days:interval)));
+  }
   Future<void> _run(Future<void> Function() action)async{
     if(busy)return;setState(()=>busy=true);
     try{await action();if(mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Concluído.')));}
@@ -37,9 +47,17 @@ class _BackupSyncScreenState extends State<BackupSyncScreen>{
       if(files.isEmpty){throw Exception('Nenhum backup do FinanceApp encontrado no Google Drive.');}
       final selected=await showDialog<DriveBackupFile>(context:context,builder:(c)=>AlertDialog(title:const Text('Restaurar backup'),content:SizedBox(width:520,height:360,child:ListView(children:files.map((f)=>ListTile(title:Text(f.name),subtitle:Text(f.createdTime?.toLocal().toString()??''),onTap:()=>Navigator.pop(c,f))).toList())),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('Cancelar'))]));
       if(selected==null)return;
-      final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Confirmar restauração'),content:const Text('A restauração substituirá os dados locais deste workspace pelos dados do backup escolhido.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancelar')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Restaurar'))]))??false;
-      if(!ok)return;
-      final snap=await service.restore(selected.id);await widget.onRestored(snap);
+      final mode=await showDialog<String>(context:context,builder:(c)=>AlertDialog(
+        title:const Text('Como deseja restaurar?'),
+        content:const Text('Já existem dados neste aparelho. Você pode manter os dados atuais e adicionar o que estiver faltando, ou substituir os dados locais pelo conteúdo do backup.'),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(c),child:const Text('Cancelar')),
+          TextButton(onPressed:()=>Navigator.pop(c,'replace'),child:const Text('Substituir pelos dados do backup')),
+          FilledButton(onPressed:()=>Navigator.pop(c,'merge'),child:const Text('Manter dados existentes')),
+        ],
+      ));
+      if(mode==null)return;
+      final snap=await service.restore(selected.id,mode:mode);await widget.onRestored(snap);
     });
   }
   Future<void> _manage()async{
@@ -47,8 +65,14 @@ class _BackupSyncScreenState extends State<BackupSyncScreen>{
     await showDialog<void>(context:context,builder:(c)=>StatefulBuilder(builder:(c,setLocal)=>AlertDialog(title:const Text('Gerenciar backups'),content:SizedBox(width:560,height:420,child:files.isEmpty?const Center(child:Text('Nenhum backup encontrado.')):ListView(children:files.map((f)=>ListTile(title:Text(f.name),subtitle:Text(f.createdTime?.toLocal().toString()??''),trailing:IconButton(icon:const Icon(Icons.delete_outline),onPressed:()async{await service.delete(f.id);files.remove(f);setLocal((){});})).toList())),actions:[FilledButton(onPressed:()=>Navigator.pop(c),child:const Text('Concluir'))]))));
   }
   @override Widget build(BuildContext context)=>Scaffold(appBar:AppBar(title:const Text('Backup e sincronização')),body:ListView(padding:const EdgeInsets.all(16),children:[
-    Card(child:ListTile(leading:const Icon(Icons.phone_android),title:const Text('Dados financeiros locais'),subtitle:const Text('Android e iOS não recebem mais transações, cartões, contas ou dívidas do servidor. O Google Drive é usado somente como backup.'))),
-    Card(child:ListTile(leading:const Icon(Icons.account_circle_outlined),title:Text(email??'Conta Google não conectada'),subtitle:Text('Último backup: $lastLabel'),trailing:email==null?TextButton(onPressed:busy?null:()async{await service.connect();await _load();},child:const Text('Conectar')):null)),
+    Card(child:ListTile(leading:const Icon(Icons.phone_android),title:const Text('Dados financeiros locais'),subtitle:const Text('O backup inclui todos os Workspaces e os dados financeiros locais. O Google Drive é usado somente como backup e restauração.'))),
+    Card(child:ListTile(
+      leading:const Icon(Icons.account_circle_outlined),
+      title:Text(email??'Conta Google não conectada'),
+      subtitle:Text('Último backup: $lastLabel\nPróximo backup: $nextLabel'),
+      isThreeLine:true,
+      trailing:email==null?TextButton(onPressed:busy?null:()async{await service.connect();await _load();},child:const Text('Conectar')):null,
+    )),
     const SizedBox(height:8),
     FilledButton.icon(onPressed:busy?null:_backup,icon:const Icon(Icons.cloud_upload_outlined),label:const Text('Fazer backup agora')),
     const SizedBox(height:10),OutlinedButton.icon(onPressed:busy?null:_chooseRestore,icon:const Icon(Icons.restore),label:const Text('Restaurar backup')),
