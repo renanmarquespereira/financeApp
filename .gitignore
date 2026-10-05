@@ -68,3 +68,5 @@ Thumbs.db
 *.backup-*
 
 _backup_patch_*/
+
+android/.kotlin/
