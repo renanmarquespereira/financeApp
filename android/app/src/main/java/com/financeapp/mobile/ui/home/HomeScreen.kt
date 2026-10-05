@@ -2548,7 +2548,6 @@ private fun DiagnosticsDialog(
     categories: List<CategoryDto>,
     cards: List<CreditCardDto>,
     onSyncNow: () -> Unit,
-    onBackupSync: () -> Unit,
     onEditPersonal: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -2715,6 +2714,7 @@ private fun AccountSettingsDialog(
     email: String?,
     lastSyncAt: String?,
     onSyncNow: () -> Unit,
+    onBackupSync: () -> Unit,
     onEditPersonal: () -> Unit,
     onAppSettings: () -> Unit,
     onDiagnostics: () -> Unit,

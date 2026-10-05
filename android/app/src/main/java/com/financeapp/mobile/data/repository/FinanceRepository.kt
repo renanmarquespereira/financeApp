@@ -144,16 +144,14 @@ class FinanceRepository @Inject constructor(
 ) {
     private val gson = Gson()
     private val operationMutex = Mutex()
-    // 43.0.83: Android passa a ser local-first estrito. O servidor continua
+    // 43.0.85: Android local-first estrito. O servidor permanece para login e
+    // servicos online, mas nao envia nem baixa automaticamente dados financeiros.
+    private val financialCloudSyncEnabled = false
+    // 43.0.84: Android local-first estrito. O servidor permanece para login e
+    // servicos online, mas nao envia nem baixa automaticamente dados financeiros.
+// 43.0.82: Android passa a ser local-first estrito. O servidor continua
     // disponivel para autenticacao/IA/Open Finance, mas nao sincroniza o banco
     // financeiro local. Backup/restauracao sao explicitamente controlados pelo usuario.
-    private val financialCloudSyncEnabled = false
-    // 43.0.82: Android passa a ser local-first estrito. O servidor continua
-    // disponivel para autenticacao/IA/Open Finance, mas nao sincroniza o banco
-    // financeiro local. Backup/restauracao sao explicitamente controlados pelo usuario.
-    private val financialCloudSyncEnabled = false
-
-
     val activeWorkspace = session.workspaceScope
     fun isGuest() = session.isGuest()
     fun guestTransferPending() = session.guestTransferPending()
