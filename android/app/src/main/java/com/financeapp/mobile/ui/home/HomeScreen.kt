@@ -1,4 +1,4 @@
-package com.financeapp.mobile.ui.home
+﻿package com.financeapp.mobile.ui.home
 
 import android.app.Activity
 import android.Manifest
@@ -1245,7 +1245,7 @@ fun HomeScreen(
                     onClick = {
                         backupScope.launch {
                             backupBusy = true
-                            runCatching { onRestoreBackup(json) }
+                            runCatching { onRestoreBackup(json, "replace") }
                                 .onSuccess { backupMessage = "Backup restaurado: $it registros" }
                                 .onFailure { backupMessage = it.message ?: "Não foi possível restaurar o backup" }
                             pendingRestoreJson = null
@@ -5865,3 +5865,4 @@ private fun SwitchListTile(title: String, subtitle: String, checked: Boolean, on
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
+
