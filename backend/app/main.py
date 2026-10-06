@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database.database import Base, engine
 from sqlalchemy import inspect, text
-from app.routers import auth, users, accounts, transactions, categories, budgets, backup, openfinance, goals, user_data, credit_cards, financial_ai, forecast_state
+from app.routers import auth, users, accounts, transactions, categories, budgets, backup, openfinance, goals, user_data, credit_cards, forecast_state
 from app.routers import sync as sync_router
 from app import models
 from app.core import workspace as workspace_boundary
@@ -214,7 +214,6 @@ app.include_router(backup.router, prefix="/backup", tags=["Backup"])
 app.include_router(openfinance.router, prefix="/openfinance", tags=["Open Finance"])
 app.include_router(sync_router.router)
 app.include_router(user_data.router)
-app.include_router(financial_ai.router)
 app.include_router(forecast_state.router)
 # Alias under /sync for clients/proxies that only expose the sync namespace.
 app.include_router(forecast_state.router, prefix="/sync")

@@ -311,7 +311,6 @@ class MainActivity : FragmentActivity() {
                                 loggedIn = false
                             }
                         },
-                        onAskFinancialAi = homeViewModel::askFinancialAi,
                         onLoadForecastState = homeViewModel::forecastState,
                         onSaveForecastState = homeViewModel::saveForecastState,
                         onClearMessage = homeViewModel::clearMessage

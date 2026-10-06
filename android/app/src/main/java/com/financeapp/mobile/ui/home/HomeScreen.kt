@@ -1,4 +1,4 @@
-﻿package com.financeapp.mobile.ui.home
+package com.financeapp.mobile.ui.home
 
 import android.app.Activity
 import android.Manifest
@@ -98,7 +98,7 @@ import com.financeapp.mobile.util.normalizeCpf
 import com.financeapp.mobile.ui.legal.LegalPrivacyDialog
 import kotlinx.coroutines.launch
 
-private enum class HomeTab { DASHBOARD, TRANSACTIONS, FORECAST, INTELLIGENCE, ACCOUNTS, INVOICES }
+private enum class HomeTab { DASHBOARD, TRANSACTIONS, FORECAST, ACCOUNTS, INVOICES }
 internal enum class SourceFilter(val label: String) { ALL("Todas"), OPEN_FINANCE("Automáticas"), MANUAL("Manuais") }
 internal enum class TypeFilter(val label: String) { ALL("Todos"), CREDIT("Entradas"), DEBIT("Saídas") }
 internal enum class AmountFilter(val label: String) { ALL("Todos"), UP_TO_100("Até R$ 100"), FROM_100_TO_500("R$ 100–500"), FROM_500_TO_1000("R$ 500–1.000"), ABOVE_1000("Acima de R$ 1.000") }
@@ -250,7 +250,6 @@ fun HomeScreen(
     onRequestDeleteAllUserDataCode: (() -> Unit) -> Unit,
     onConfirmDeleteAllUserData: (String, UserDataDeleteOptionsRequest, () -> Unit) -> Unit,
     onLogout: () -> Unit,
-    onAskFinancialAi: suspend (com.financeapp.mobile.data.remote.FinancialAiRequest) -> com.financeapp.mobile.data.remote.FinancialAiResponse,
     onLoadForecastState: suspend () -> Map<String, Any?> = { emptyMap() },
     onSaveForecastState: suspend (Map<String, Any?>) -> Map<String, Any?> = { emptyMap() },
     onClearMessage: () -> Unit
@@ -353,26 +352,11 @@ fun HomeScreen(
                 voiceError = "Não consegui entender o que foi falado. Tente novamente."
             } else {
                 val localDraft = VoiceTransactionParser.parse(spoken, accounts, categories, cards)
-                voiceProcessing = true
-                backupScope.launch {
-                    val enriched = runCatching {
-                        val response = onAskFinancialAi(
-                            com.financeapp.mobile.data.remote.FinancialAiRequest(
-                                question = VoiceTransactionParser.aiPrompt(spoken, accounts, categories, cards),
-                                summary = emptyMap()
-                            )
-                        )
-                        VoiceTransactionParser.parseAiAnswer(
-                            response.answer, localDraft, accounts, categories, cards
-                        )
-                    }.getOrNull() ?: localDraft
-
-                    voiceProcessing = false
-                    if (enriched.amount <= 0.0) {
-                        voiceError = "Entendi a frase, mas não consegui identificar o valor. Fale, por exemplo: ‘Gastei na padaria dois reais e cinquenta e dois centavos’."
-                    } else {
-                        voiceDraft = enriched
-                    }
+                voiceProcessing = false
+                if (localDraft.amount <= 0.0) {
+                    voiceError = "Entendi a frase, mas não consegui identificar o valor. Fale, por exemplo: ‘Gastei na padaria dois reais e cinquenta e dois centavos’."
+                } else {
+                    voiceDraft = localDraft
                 }
             }
         }
@@ -780,7 +764,7 @@ fun HomeScreen(
                 ) {
                     customization.navOrder.filter { it == "TRANSACTIONS" || it !in customization.hiddenNav }.forEach { id ->
                         val tab = runCatching { HomeTab.valueOf(id) }.getOrNull() ?: return@forEach
-                        val label = when(tab){ HomeTab.DASHBOARD->"Início"; HomeTab.TRANSACTIONS->"Transações"; HomeTab.FORECAST->"Previsão"; HomeTab.INTELLIGENCE->"Inteligência"; HomeTab.ACCOUNTS->"Bancos"; HomeTab.INVOICES->"Faturas" }
+                        val label = when(tab){ HomeTab.DASHBOARD->"Início"; HomeTab.TRANSACTIONS->"Transações"; HomeTab.FORECAST->"Previsão"; HomeTab.ACCOUNTS->"Bancos"; HomeTab.INVOICES->"Faturas" }
                         NavigationBarItem(
                             selected = selectedTab == tab,
                             onClick = { selectedTab = tab },
@@ -793,7 +777,7 @@ fun HomeScreen(
                             ),
                             icon = {
                                 Icon(
-                                    when(tab){HomeTab.DASHBOARD->Icons.Default.Home;HomeTab.TRANSACTIONS->Icons.Default.ReceiptLong;HomeTab.FORECAST->Icons.Default.ShowChart;HomeTab.INTELLIGENCE->Icons.Default.AutoAwesome;HomeTab.ACCOUNTS->Icons.Default.AccountBalance;HomeTab.INVOICES->Icons.Default.CreditCard},
+                                    when(tab){HomeTab.DASHBOARD->Icons.Default.Home;HomeTab.TRANSACTIONS->Icons.Default.ReceiptLong;HomeTab.FORECAST->Icons.Default.ShowChart;HomeTab.ACCOUNTS->Icons.Default.AccountBalance;HomeTab.INVOICES->Icons.Default.CreditCard},
                                     null,
                                     modifier = Modifier.size(navIconSize)
                                 )
@@ -952,19 +936,6 @@ fun HomeScreen(
                     onRecordDebtPayment = { debtName, amount, date, accountId ->
                         onCreateManual(accountId, null, "Pagamento de dívida • $debtName", -kotlin.math.abs(amount), "debit", date.toString(), null, 1, null) { }
                     }
-                )
-                HomeTab.INTELLIGENCE -> FinancialIntelligenceScreen(
-                    accounts = accounts,
-                    transactions = transactions.filterNot(::isPendingPayable),
-                    categories = categories,
-                    cards = cards,
-                    onAskFinancialAi = onAskFinancialAi,
-                    userKey = state.userEmail ?: "local",
-                    workspaceName = workspaceName,
-                    workspaceId = workspaceId,
-                    syncRevision = state.lastSyncAt,
-                    onLoadForecastState = onLoadForecastState,
-                    onSaveForecastState = onSaveForecastState
                 )
                 HomeTab.INVOICES -> InvoiceCenterScreen(accounts, cards, transactions, onPayCardInvoice)
                 HomeTab.ACCOUNTS -> AccountsList(

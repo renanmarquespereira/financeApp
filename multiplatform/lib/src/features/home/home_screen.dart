@@ -85,7 +85,6 @@ class HomeScreen extends StatefulWidget {
     required this.onDeleteCard,
     required this.onSaveCategory,
     required this.onDeleteCategory,
-    this.onAskAi,
     required this.onSaveSnapshot,
     required this.api,
     this.accessToken,
@@ -113,7 +112,6 @@ class HomeScreen extends StatefulWidget {
   final Future<void> Function(int) onDeleteCard;
   final Future<void> Function(FinanceCategory) onSaveCategory;
   final Future<void> Function(int) onDeleteCategory;
-  final Future<String> Function(String, Map<String, dynamic>)? onAskAi;
   final Future<void> Function(FinancialSnapshot) onSaveSnapshot;
   final ApiClient api;
   final String? accessToken;
@@ -267,29 +265,6 @@ class _HomeScreenState extends State<HomeScreen> {
           refreshing: widget.syncing,
           isGuest: widget.isGuest,
           onSaveTransaction: widget.onSaveTransaction,
-        ),
-      ));
-    if (customization.showIntelligenceTab)
-      nav.add((
-        key: 'intelligence',
-        destination: const NavigationDestination(
-          icon: Icon(Icons.psychology_alt_outlined),
-          selectedIcon: Icon(Icons.psychology_alt),
-          label: 'Inteligência',
-        ),
-        page: IntelligenceView(
-          key: ValueKey('intelligence_${widget.workspace.id}'),
-          api: widget.api,
-          accessToken: widget.accessToken,
-          workspaceId: widget.workspace.id,
-          refreshing: widget.syncing,
-          snapshot: widget.snapshot.copyWith(
-            transactions: widget.snapshot.transactions
-                .where((t) => !_isNonCashPlanned(t))
-                .toList(),
-          ),
-          isGuest: widget.isGuest,
-          onAskAi: widget.onAskAi,
         ),
       ));
     if (customization.showAccountsTab)
@@ -2362,7 +2337,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     snapshot: widget.snapshot,
                     isGuest: widget.isGuest,
                     onSaveTransaction: widget.onSaveTransaction,
-                    onAskAi: widget.onAskAi,
                     initialIndex: 2,
                     initialCardId: invoiceAlerts.first.$1.id,
                   ),
@@ -3129,7 +3103,6 @@ class _HomeScreenState extends State<HomeScreen> {
           snapshot: widget.snapshot,
           isGuest: widget.isGuest,
           onSaveTransaction: widget.onSaveTransaction,
-          onAskAi: widget.onAskAi,
           initialIndex: 2,
         ),
       ),
@@ -3638,7 +3611,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               snapshot: widget.snapshot,
                               isGuest: widget.isGuest,
                               onSaveTransaction: widget.onSaveTransaction,
-                              onAskAi: widget.onAskAi,
                               initialIndex: 2,
                               initialCardId: c.id,
                             ),

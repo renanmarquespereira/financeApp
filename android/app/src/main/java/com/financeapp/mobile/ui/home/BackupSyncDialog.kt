@@ -1,4 +1,4 @@
-package com.financeapp.mobile.ui.home
+﻿package com.financeapp.mobile.ui.home
 
 import android.content.Context
 import android.content.Intent
@@ -133,6 +133,7 @@ fun BackupSyncDialog(
     var selectedManageUri by remember { mutableStateOf<Uri?>(null) }
     var pendingAutomaticDays by remember { mutableStateOf<Int?>(null) }
     var pendingRestoreRaw by remember { mutableStateOf<String?>(null) }
+    var pendingReplaceRaw by remember { mutableStateOf<String?>(null) }
     var intervalExpanded by remember { mutableStateOf(false) }
 
     val manualBackupLauncher = rememberLauncherForActivityResult(
@@ -308,30 +309,82 @@ fun BackupSyncDialog(
             onDismissRequest = { pendingRestoreRaw = null },
             title = { Text("Como deseja restaurar?") },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text("Já existem dados neste aparelho. Escolha como o backup deve ser aplicado.")
-                    Spacer(Modifier.height(10.dp))
-                    Text("Manter dados existentes: preserva o que já existe e adiciona somente o que estiver faltando.", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(6.dp))
-                    Text("Substituir pelos dados do backup: remove os dados locais e restaura exatamente o conteúdo do arquivo.", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Manter dados existentes: preserva o que já existe e adiciona somente o que estiver faltando.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Substituir pelos dados do backup: apaga os dados existentes no aparelho e restaura exatamente o conteúdo do arquivo.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(18.dp))
+
+                    Button(
+                        onClick = {
+                            pendingRestoreRaw = null
+                            scope.launch {
+                                busy = true
+                                runCatching { onRestoreBackup(raw, "merge") }
+                                    .onSuccess { count -> message = "Backup mesclado: $count registros processados." }
+                                    .onFailure { message = it.message ?: "Não foi possível restaurar." }
+                                busy = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Manter dados existentes")
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            pendingRestoreRaw = null
+                            pendingReplaceRaw = raw
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "Substituir pelos dados do backup",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    TextButton(
+                        onClick = { pendingRestoreRaw = null },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Cancelar")
+                    }
                 }
             },
-            confirmButton = {
-                Button(onClick = {
-                    pendingRestoreRaw = null
-                    scope.launch {
-                        busy = true
-                        runCatching { onRestoreBackup(raw, "merge") }
-                            .onSuccess { count -> message = "Backup mesclado: $count registros processados." }
-                            .onFailure { message = it.message ?: "Não foi possível restaurar." }
-                        busy = false
-                    }
-                }) { Text("Manter existentes") }
+            confirmButton = {}
+        )
+    }
+
+    pendingReplaceRaw?.let { raw ->
+        AlertDialog(
+            onDismissRequest = { pendingReplaceRaw = null },
+            title = { Text("Substituir dados existentes?") },
+            text = {
+                Text(
+                    "Você tem certeza? Isso apagará os dados existentes neste aparelho e restaurará somente os dados do backup."
+                )
             },
-            dismissButton = {
-                Column {
-                    TextButton(onClick = {
-                        pendingRestoreRaw = null
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingReplaceRaw = null
                         scope.launch {
                             busy = true
                             runCatching { onRestoreBackup(raw, "replace") }
@@ -339,8 +392,18 @@ fun BackupSyncDialog(
                                 .onFailure { message = it.message ?: "Não foi possível restaurar." }
                             busy = false
                         }
-                    }) { Text("Substituir pelos dados do backup") }
-                    TextButton(onClick = { pendingRestoreRaw = null }) { Text("Cancelar") }
+                    },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text("Sim, substituir")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingReplaceRaw = null }) {
+                    Text("Cancelar")
                 }
             }
         )
@@ -382,3 +445,4 @@ fun BackupSyncDialog(
         )
     }
 }
+
