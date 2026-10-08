@@ -21,4 +21,5 @@
     <exclude domain="file" path="guest-transfer.json.bak" />
     <exclude domain="file" path="guest-transfer.json.new" />
     <exclude domain="sharedpref" path="finance_session.xml" />
+    <exclude domain="sharedpref" path="finance_data_deletion_security.xml" />
 </full-backup-content>

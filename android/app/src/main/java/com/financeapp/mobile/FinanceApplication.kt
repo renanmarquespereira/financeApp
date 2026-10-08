@@ -21,9 +21,19 @@ class FinanceApplication : Application(), Configuration.Provider {
     @Inject
     lateinit var repository: FinanceRepository
 
+    // FINANCEAPP_DELETE_V1
+    @Inject
+    lateinit var localDataDeletionRepository: com.financeapp.mobile.data.deletion.LocalDataDeletionRepository
+
 
     override fun onCreate() {
         super.onCreate()
+
+        // Finish only previously committed/authorized cleanup before any screen or worker starts.
+        // No network, code request or new deletion is performed at startup.
+        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+            localDataDeletionRepository.recover()
+        }
 
         FinanceNotificationScheduler.schedule(this, runNow = true)
 

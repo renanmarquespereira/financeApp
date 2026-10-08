@@ -89,25 +89,8 @@ private fun paymentAccountLabel(account: AccountEntity): String {
     return listOfNotNull(bankName, detail).joinToString(" • ")
 }
 
-private fun invoiceWindow(closingDay: Int?, monthOffset: Long = 0): Pair<LocalDate, LocalDate> {
-    val today = LocalDate.now()
-    val close = (closingDay ?: today.dayOfMonth).coerceIn(1, 31)
-    fun closing(month: YearMonth): LocalDate = month.atDay(close.coerceAtMost(month.lengthOfMonth()))
-    val thisClose = closing(YearMonth.from(today))
-    val end = if (!today.isAfter(thisClose)) thisClose else closing(YearMonth.from(today).plusMonths(1))
-    val previous = closing(YearMonth.from(end).minusMonths(1))
-    val shiftedEndMonth = YearMonth.from(end).plusMonths(monthOffset)
-    val shiftedEnd = closing(shiftedEndMonth)
-    val shiftedPrevious = closing(shiftedEndMonth.minusMonths(1))
-    return shiftedPrevious.plusDays(1) to shiftedEnd
-}
-
-private fun invoiceDueDate(end: LocalDate, dueDay: Int?): LocalDate? {
-    val due = dueDay ?: return null
-    var month = YearMonth.from(end)
-    if (due <= end.dayOfMonth) month = month.plusMonths(1)
-    return month.atDay(due.coerceAtMost(month.lengthOfMonth()))
-}
+private fun invoiceWindow(closingDay: Int?, dueDay: Int?, monthOffset: Long = 0): Pair<LocalDate, LocalDate> =
+    cardBillingWindow(YearMonth.from(LocalDate.now()).plusMonths(monthOffset), closingDay, dueDay)
 
 private val BRAZILIAN_CARD_ISSUERS = listOf(
     "Banco do Brasil",
@@ -368,7 +351,8 @@ internal fun AccountsList(
     onDisconnect: (AccountEntity) -> Unit,
     onReconnect: (AccountEntity) -> Unit,
     onDelete: (AccountEntity) -> Unit,
-    onOpenInvoices: () -> Unit
+    onOpenInvoices: () -> Unit,
+    onEditCardTransaction: (TransactionEntity) -> Unit
 ) {
     var showNewCard by remember {
         mutableStateOf(false)
@@ -656,7 +640,7 @@ internal fun AccountsList(
             }
 
             items(items = cards, key = { "card-${it.id}" }) { card ->
-                val invoiceRange = invoiceWindow(card.closingDay)
+                val invoiceRange = invoiceWindow(card.closingDay, card.dueDay)
                 val cardSpent = (-transactions.filter { tx ->
                     tx.cardId == card.id && tx.source != "card_payment" && runCatching { LocalDate.parse(tx.date.take(10)) }.getOrNull()?.let { !it.isBefore(invoiceRange.first) && !it.isAfter(invoiceRange.second) } == true
                 }.sumOf { it.amount }).coerceAtLeast(0.0)
@@ -733,10 +717,11 @@ internal fun AccountsList(
     }
 
     viewingCard?.let { card ->
-        val range = invoiceWindow(card.closingDay, invoiceMonthOffset)
+        val range = invoiceWindow(card.closingDay, card.dueDay, invoiceMonthOffset)
+        val invoiceMonth = YearMonth.from(LocalDate.now()).plusMonths(invoiceMonthOffset)
         val cardTransactions = transactions.filter { tx ->
-            tx.cardId == card.id && tx.source != "card_payment" && runCatching { LocalDate.parse(tx.date.take(10)) }.getOrNull()?.let { !it.isBefore(range.first) && !it.isAfter(range.second) } == true
-        }.sortedByDescending { it.date }
+            cardBillingMatches(tx, card, invoiceMonth)
+        }.sortedByDescending { cardBillingTransactionDate(it) }
         val invoicePayments = transactions.filter { tx ->
             tx.cardId == card.id && tx.source == "card_payment" && tx.purchaseDate?.take(10) == range.second.toString()
         }.sortedByDescending { it.date }
@@ -744,9 +729,10 @@ internal fun AccountsList(
         val spent = (-cardTransactions.sumOf { it.amount }).coerceAtLeast(0.0)
         val paid = invoicePayments.sumOf { kotlin.math.abs(it.amount) }
         val remaining = (spent - paid).coerceAtLeast(0.0)
-        val dueDate = invoiceDueDate(range.second, card.dueDay)
+        val dueDate = cardBillingDue(range.second, card.closingDay, card.dueDay)
         val available = card.creditLimit?.let { (it - spent).coerceAtLeast(0.0) }
-        val competence = "${range.second.monthValue.toString().padStart(2, '0')}/${range.second.year}"
+        val invoiceCompetence = YearMonth.from(LocalDate.now()).plusMonths(invoiceMonthOffset)
+        val competence = "${invoiceCompetence.monthValue.toString().padStart(2, '0')}/${invoiceCompetence.year}"
         AlertDialog(
             onDismissRequest = { viewingCard = null; invoiceMonthOffset = 0L },
             title = { Text(card.nickname ?: card.bankName) },
@@ -832,15 +818,20 @@ internal fun AccountsList(
                     available?.let { Text("Limite disponível nesta fatura: ${currency.format(it)}") }
                     Text("Período: ${range.first.dayOfMonth.toString().padStart(2,'0')}/${range.first.monthValue.toString().padStart(2,'0')}/${range.first.year} a ${range.second.dayOfMonth.toString().padStart(2,'0')}/${range.second.monthValue.toString().padStart(2,'0')}/${range.second.year}")
                     HorizontalDivider()
-                    Text("Compras da fatura (${cardTransactions.size})", fontWeight=FontWeight.SemiBold)
-                    if (cardTransactions.isEmpty()) Text("Nenhuma compra vinculada a esta fatura.") else LazyColumn(Modifier.fillMaxWidth().heightIn(max=220.dp)) {
+                    Text("Transações da fatura (${cardTransactions.size}) • Toque para editar", fontWeight=FontWeight.SemiBold)
+                    if (cardTransactions.isEmpty()) Text("Nenhuma transação encontrada nesta fatura. Confira a data da compra e o fechamento do cartão.") else LazyColumn(Modifier.fillMaxWidth().heightIn(max=340.dp)) {
                         items(cardTransactions, key={ "card-detail-${it.id}" }) { tx ->
-                            Row(Modifier.fillMaxWidth().padding(vertical=5.dp), horizontalArrangement=Arrangement.SpaceBetween) {
+                            Row(Modifier.fillMaxWidth().clickable { viewingCard = null; onEditCardTransaction(tx) }.padding(vertical=8.dp), horizontalArrangement=Arrangement.SpaceBetween) {
                                 Column(Modifier.weight(1f)) {
                                     Text(tx.description, maxLines=1)
                                     Text(listOfNotNull(tx.date.take(10), if (tx.installmentTotal != null && tx.installmentTotal > 1) "${tx.installmentNumber ?: 1}/${tx.installmentTotal}" else null).joinToString(" • "), style=MaterialTheme.typography.bodySmall)
                                 }
                                 Text(currency.format(kotlin.math.abs(tx.amount)), fontWeight=FontWeight.SemiBold)
+                                TextButton(onClick = { viewingCard = null; onEditCardTransaction(tx) }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Editar compra do cartão")
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Editar")
+                                }
                             }
                         }
                     }
@@ -867,10 +858,9 @@ internal fun AccountsList(
     }
 
     payingCard?.let { card ->
-        val range = invoiceWindow(card.closingDay, invoiceMonthOffset)
-        val purchases = transactions.filter { tx ->
-            tx.cardId == card.id && tx.source != "card_payment" && runCatching { LocalDate.parse(tx.date.take(10)) }.getOrNull()?.let { !it.isBefore(range.first) && !it.isAfter(range.second) } == true
-        }
+        val range = invoiceWindow(card.closingDay, card.dueDay, invoiceMonthOffset)
+        val invoiceMonth = YearMonth.from(LocalDate.now()).plusMonths(invoiceMonthOffset)
+        val purchases = transactions.filter { tx -> cardBillingMatches(tx, card, invoiceMonth) }
         val payments = transactions.filter { it.cardId == card.id && it.source == "card_payment" && it.purchaseDate?.take(10) == range.second.toString() }
         val remaining = (purchases.filter { it.amount < 0 }.sumOf { -it.amount } - payments.sumOf { kotlin.math.abs(it.amount) }).coerceAtLeast(0.0)
         var selectedAccountId by remember(card.id) { mutableStateOf(accounts.firstOrNull()?.id) }
@@ -1142,8 +1132,9 @@ internal fun AccountsList(
                             FontWeight.SemiBold
                     )
                     Text(
-                        "O cartão será removido da sua lista. " +
-                            "As transações já registradas continuarão no histórico.",
+                        // FINANCEAPP_DELETE_V1
+                        "A pr\u00f3xima tela mostra os dados vinculados ao cart\u00e3o que ser\u00e3o removidos. " +
+                            "Nada ser\u00e1 apagado antes da revis\u00e3o e do c\u00f3digo de 4 d\u00edgitos por e-mail.",
                         style =
                             MaterialTheme.typography.bodySmall
                     )

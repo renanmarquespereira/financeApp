@@ -37,6 +37,10 @@ router = APIRouter(
     tags=["User data"],
 )
 
+# FINANCEAPP_DELETE_V1: standalone confirmation service; never deletes remote finances.
+from app.routers.local_deletion import router as local_deletion_router
+router.include_router(local_deletion_router)
+
 
 def _code_hash(
     user_id: int,
@@ -106,7 +110,7 @@ def request_delete_all_data_code(
 
     code = f"{secrets.randbelow(10000):04d}"
 
-    expires_at = now + timedelta(minutes=10)
+    expires_at = now + timedelta(minutes=5)
     verification = UserDataDeletionCode(
         user_id=user.id,
         code_hash=_code_hash(user.id, code),
@@ -133,7 +137,7 @@ def request_delete_all_data_code(
     return {
         "status": "code_sent",
         "email": user.email,
-        "expires_in_seconds": 600,
+        "expires_in_seconds": 300,
         "deletion_token": _deletion_token(user.id, code, expires_at),
     }
 
@@ -148,35 +152,28 @@ def confirm_delete_all_data(
     if len(code) != 4 or not code.isdigit():
         raise HTTPException(400, "Informe o código de 4 dígitos.")
 
+    # O registro no banco e a fonte de verdade. Um token assinado isolado
+    # nunca autoriza exclusao: ele poderia ser reutilizado apos o primeiro uso.
     verification = (db.query(UserDataDeletionCode)
         .filter(UserDataDeletionCode.user_id == user.id)
-        .order_by(UserDataDeletionCode.created_at.desc()).first())
+        .order_by(UserDataDeletionCode.created_at.desc())
+        .with_for_update().first())
     now = datetime.now(timezone.utc)
-    token_valid = _verify_deletion_token(data.deletion_token, user.id, code, now)
-    if not verification and not token_valid:
-        raise HTTPException(400, "Solicite um novo código de confirmação.")
     if verification is None:
-        # O token assinado mantém a confirmação válida mesmo quando a requisição
-        # seguinte cai em outra instância/processo e o registro temporário não é visível.
-        verification = None
-    expires = verification.expires_at if verification is not None else now + timedelta(seconds=1)
+        raise HTTPException(400, "Solicite um novo codigo de confirmacao.")
+    expires = verification.expires_at
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
-    if not token_valid:
-        if now > expires:
-            db.delete(verification); db.commit()
-            raise HTTPException(400, "Código expirado. Solicite um novo código.")
-        if verification.attempts >= 5:
-            db.delete(verification); db.commit()
-            raise HTTPException(429, "Número máximo de tentativas atingido. Solicite outro código.")
-        if not secrets.compare_digest(verification.code_hash, _code_hash(user.id, code)):
-            verification.attempts += 1
-            remaining = max(0, 5 - verification.attempts)
-            if remaining == 0:
-                db.delete(verification); db.commit()
-                raise HTTPException(429, "Código incorreto. Limite de 5 tentativas atingido. Solicite um novo código.")
-            db.commit()
-            raise HTTPException(400, f"Código incorreto. Tentativas restantes: {remaining}.")
+    if now >= expires:
+        db.delete(verification)
+        db.commit()
+        raise HTTPException(400, "Codigo expirado. Solicite um novo codigo.")
+    if verification.attempts >= 5:
+        raise HTTPException(429, "Limite de tentativas atingido. Solicite outro codigo.")
+    if not secrets.compare_digest(verification.code_hash, _code_hash(user.id, code)):
+        verification.attempts += 1
+        db.commit()
+        raise HTTPException(400, "Codigo incorreto. Tente novamente.")
 
     o = data.options
     if not any([o.transactions, o.categories, o.accounts, o.cards, o.budgets,

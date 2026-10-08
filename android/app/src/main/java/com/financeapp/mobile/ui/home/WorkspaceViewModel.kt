@@ -44,7 +44,7 @@ class WorkspaceViewModel @Inject constructor(private val repository: FinanceRepo
                     JSONObject(e.response()?.errorBody()?.string().orEmpty()).optString("detail")
                 }.getOrNull() else null
                 mutableState.value = mutableState.value.copy(busy = false, error = when {
-                    e is IOException -> "Sem conexão com o servidor. Você ainda pode abrir um workspace salvo neste aparelho."
+                    e is IOException -> "Não foi possível acessar os dados locais agora."
                     !detail.isNullOrBlank() -> detail
                     else -> e.message ?: "Não foi possível concluir. Tente novamente."
                 })
@@ -53,17 +53,29 @@ class WorkspaceViewModel @Inject constructor(private val repository: FinanceRepo
     }
 
     fun refresh() {
-        if (mutableState.value.refreshing) return
-        mutableState.value = mutableState.value.copy(refreshing = true, error = null)
         viewModelScope.launch {
-            try { repository.refreshWorkspaces() }
-            catch (e: CancellationException) { throw e }
-            catch (_: Exception) {
-                mutableState.value = mutableState.value.copy(error = "Lista local disponível. Não foi possível atualizar os workspaces agora.")
-            } finally { mutableState.value = mutableState.value.copy(refreshing = false) }
+            try {
+                repository.refreshWorkspaces()
+                mutableState.value =
+                    mutableState.value.copy(
+                        busy = false,
+                        refreshing = false,
+                        error = null
+                    )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                mutableState.value =
+                    mutableState.value.copy(
+                        busy = false,
+                        refreshing = false,
+                        error = e.message ?: "Não foi possível carregar os workspaces."
+                    )
+            }
         }
     }
-    fun select(id: String, done: () -> Unit) = action(done) { repository.selectWorkspace(id) }
+
+        fun select(id: String, done: () -> Unit) = action(done) { repository.selectWorkspace(id) }
     fun create(name: String, kind: String, clientId: String, done: () -> Unit) = action(done) {
         repository.createWorkspace(name, kind, clientId)
     }

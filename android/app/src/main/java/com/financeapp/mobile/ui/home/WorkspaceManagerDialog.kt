@@ -49,7 +49,6 @@ fun WorkspaceManagerDialog(
             Column(Modifier.fillMaxSize().safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Workspaces", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                    IconButton(onClick = onRefresh, enabled = !state.busy) { Icon(Icons.Default.Refresh, "Atualizar workspaces") }
                     IconButton(onClick = onDismiss, enabled = !state.busy) { Icon(Icons.Default.Close, "Fechar workspaces") }
                 }
                 Text("Separe suas finanças pessoais, da empresa e da família.", style = MaterialTheme.typography.bodyMedium)
@@ -57,12 +56,12 @@ fun WorkspaceManagerDialog(
                     FilterChip(selected = !archived, onClick = { archived = false }, label = { Text("Ativos") })
                     FilterChip(selected = archived, onClick = { archived = true }, label = { Text("Arquivados") })
                 }
-                if (state.busy || state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 val visible = workspaces.filter { (it.archivedAt != null) == archived }
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (visible.isEmpty()) item {
-                        Text(if (archived) "Nenhum workspace arquivado." else "Atualize a lista ou crie seu primeiro workspace.")
+                        Text(if (archived) "Nenhum workspace arquivado." else "Crie seu primeiro workspace.")
                     }
                     items(visible, key = { it.id }) { row ->
                         OutlinedCard(
@@ -108,7 +107,7 @@ fun WorkspaceManagerDialog(
                         Icon(Icons.Default.Delete, null); Spacer(Modifier.width(8.dp)); Text("Excluir selecionados (${selectedArchived.size})")
                     }
                 }
-                Text("Você pode trocar entre ambientes salvos sem internet. Para criar, editar ou arquivar, conecte-se ao servidor.",
+                Text("",
                     style = MaterialTheme.typography.bodySmall)
                 Button(onClick = { onClearError(); creating = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Criar workspace")
@@ -119,18 +118,20 @@ fun WorkspaceManagerDialog(
             }
         }
     }
+    // FINANCEAPP_DELETE_V1: including archived workspaces; no more onConfirm("LOCAL").
     deleting?.let { row ->
-        WorkspaceDeleteDialog(row.name, state,
+        DataDeletionDialog(
             onDismiss = { deleting = null; onClearError() },
-            onRequest = { done -> onDeleteCode(row.id, done) },
-            onConfirm = { code -> onConfirmDelete(row.id, code) { deleting = null } })
+            initialChoice = com.financeapp.mobile.data.deletion.DeletionChoice(
+                workspaceIds = setOf(row.id), deleteWorkspaces = true)
+        )
     }
     deletingBatch?.let { rows ->
-        val ids = rows.map { it.id }
-        WorkspaceDeleteDialog("${rows.size} workspaces selecionados", state,
-            onDismiss = { deletingBatch = null; onClearError() },
-            onRequest = { done -> onDeleteCodeBatch(ids, done) },
-            onConfirm = { code -> onConfirmDeleteBatch(ids, code) { selectedArchived = emptySet(); deletingBatch = null } })
+        DataDeletionDialog(
+            onDismiss = { deletingBatch = null; selectedArchived = emptySet(); onClearError() },
+            initialChoice = com.financeapp.mobile.data.deletion.DeletionChoice(
+                workspaceIds = rows.map { it.id }.toSet(), deleteWorkspaces = true)
+        )
     }
     if (creating || editing != null) {
         WorkspaceEditor(editing, state, onDismiss = { creating = false; editing = null; onClearError() }) { name, kind, clientId ->
@@ -144,7 +145,7 @@ fun WorkspaceManagerDialog(
             onDismissRequest = { if (!state.busy) archiving = null },
             title = { Text("Arquivar ${row.name}?") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Os dados serão mantidos e a importação Open Finance ficará pausada. Você poderá restaurar este workspace depois." +
+                Text("Os dados serão mantidos neste aparelho e no próximo backup. Você poderá restaurar este workspace depois." +
                     if (row.id == activeId) " O app abrirá automaticamente outro workspace ativo." else "")
                 state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             } },

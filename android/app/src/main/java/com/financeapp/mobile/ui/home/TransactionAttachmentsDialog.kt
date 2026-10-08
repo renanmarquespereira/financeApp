@@ -287,13 +287,6 @@ internal fun TransactionAttachmentsDialog(
                                             if (row.sizeBytes < 1048576) "${row.sizeBytes / 1024} KB" else "%.1f MB".format(row.sizeBytes / 1048576.0),
                                             style = MaterialTheme.typography.bodySmall
                                         )
-                                        if (row.id < 0) {
-                                            Text(
-                                                "Aguardando sincronizacao",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
                                     }
                                 }
                                 Row(

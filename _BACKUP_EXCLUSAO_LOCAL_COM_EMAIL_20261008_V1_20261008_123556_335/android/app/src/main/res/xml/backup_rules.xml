@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!--
+        Login/preferências podem continuar no backup do Android.
+        O banco financeiro NÃO: a fonte de restauração é o snapshot
+        autenticado do servidor, que "Apagar todos os dados" zera.
+    -->
+    <exclude
+        domain="database"
+        path="finance.db" />
+    <exclude
+        domain="database"
+        path="finance.db-shm" />
+    <exclude
+        domain="database"
+        path="finance.db-wal" />
+    <exclude
+        domain="file"
+        path="reports/" />
+    <exclude domain="file" path="guest-transfer.json" />
+    <exclude domain="file" path="guest-transfer.json.bak" />
+    <exclude domain="file" path="guest-transfer.json.new" />
+    <exclude domain="sharedpref" path="finance_session.xml" />
+</full-backup-content>

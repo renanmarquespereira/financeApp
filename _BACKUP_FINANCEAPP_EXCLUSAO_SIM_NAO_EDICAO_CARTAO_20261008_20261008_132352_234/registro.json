@@ -1,0 +1,12 @@
+{
+    "patch":  "FINANCEAPP_EXCLUSAO_SIM_NAO_EDICAO_CARTAO_20261008",
+    "project":  "D:\\RENAN_APP\\FinanceApp_Consolidado",
+    "created":  "2026-10-08T13:23:52.5470311-03:00",
+    "files":  [
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/DataDeletionDialog.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/data/deletion/LocalDataDeletionRepository.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/TransactionDialogs.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/data/repository/FinanceRepository.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/AccountsCardsScreen.kt"
+              ]
+}

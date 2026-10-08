@@ -1,7 +1,7 @@
 name: financeapp_multiplatform
 description: FinanceApp multiplataforma - Android, iOS e Web.
 publish_to: "none"
-version: 3.41.0+34100
+version: 4.0.0+40000
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

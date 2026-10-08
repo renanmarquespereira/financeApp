@@ -1,8 +1,11 @@
-﻿package com.financeapp.mobile.ui.home
+package com.financeapp.mobile.ui.home
 
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import com.financeapp.mobile.data.local.WorkspaceEntity
+import com.google.gson.JsonArray
+import com.google.gson.JsonParser
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -48,6 +51,8 @@ private const val BACKUP_PREFS = "financeapp_google_drive_backup"
 private const val KEY_INTERVAL = "interval_days"
 private const val KEY_URI = "automatic_backup_uri"
 private const val KEY_LAST = "last_backup_at"
+private const val KEY_LAST_AUTO = "last_automatic_backup_at"
+private const val KEY_AUTO_ERROR = "last_automatic_backup_error"
 
 private fun Context.backupPrefs() = getSharedPreferences(BACKUP_PREFS, Context.MODE_PRIVATE)
 
@@ -80,6 +85,29 @@ private fun isGoogleDriveUri(uri: Uri): Boolean {
     return authority.contains("google") || authority == "com.google.android.apps.docs.storage"
 }
 
+/** Mantem o formato v3, mas nunca inclui dados de outros workspaces no arquivo individual. */
+private fun backupJsonForScope(json: String, selectedWorkspaceId: String?): String {
+    if (selectedWorkspaceId == null) return json
+    val root = JsonParser.parseString(json).asJsonObject
+    require(root.get("format")?.asString == "financeapp-backup-v3") {
+        "Backup individual disponivel somente no formato de Workspaces (v3)."
+    }
+    val all = root.getAsJsonArray("workspaces") ?: error("Backup sem Workspaces.")
+    val only = JsonArray()
+    for (payload in all) {
+        val workspace = payload.asJsonObject.getAsJsonObject("workspace") ?: continue
+        if (workspace.get("id")?.asString == selectedWorkspaceId) only.add(payload)
+    }
+    require(only.size() == 1) { "O Workspace selecionado nao foi encontrado no backup local." }
+    root.add("workspaces", only)
+    root.addProperty("scope", "workspace")
+    return root.toString()
+}
+
+private fun isSingleWorkspaceBackup(raw: String): Boolean =
+    runCatching { JsonParser.parseString(raw).asJsonObject.get("scope")?.asString == "workspace" }
+        .getOrDefault(false)
+
 private fun takeWritePermission(context: Context, uri: Uri) {
     runCatching {
         context.contentResolver.takePersistableUriPermission(
@@ -105,13 +133,22 @@ fun BackupAutoRunner(
         val days = prefs.getInt(KEY_INTERVAL, 0)
         val uriText = prefs.getString(KEY_URI, null)
         if (days <= 0 || uriText.isNullOrBlank()) return@LaunchedEffect
-        val last = prefs.getLong(KEY_LAST, 0L)
-        val due = System.currentTimeMillis() - last >= days * 86_400_000L
+        // Separar o horario do backup automatico do manual: salvar um workspace
+        // manualmente nao deve adiar o backup completo automatico.
+        val lastAuto = prefs.getLong(KEY_LAST_AUTO, 0L)
+        val due = System.currentTimeMillis() - lastAuto >= days * 86_400_000L
         if (!due) return@LaunchedEffect
         runCatching {
             writeBackup(context, Uri.parse(uriText), onExportBackup())
         }.onSuccess {
-            prefs.edit().putLong(KEY_LAST, System.currentTimeMillis()).apply()
+            val now = System.currentTimeMillis()
+            prefs.edit().putLong(KEY_LAST, now).putLong(KEY_LAST_AUTO, now)
+                .remove(KEY_AUTO_ERROR).apply()
+        }.onFailure { failure ->
+            prefs.edit().putString(
+                KEY_AUTO_ERROR,
+                failure.message ?: "Falha ao atualizar o backup no Google Drive."
+            ).apply()
         }
     }
 }
@@ -121,7 +158,11 @@ fun BackupAutoRunner(
 fun BackupSyncDialog(
     onDismiss: () -> Unit,
     onExportBackup: suspend () -> String,
-    onRestoreBackup: suspend (String, String) -> Int
+    onRestoreBackup: suspend (String, String) -> Int,
+    onImportData: () -> Unit = {},
+    currentWorkspaceId: String,
+    currentWorkspaceName: String,
+    workspaces: List<WorkspaceEntity>
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -135,6 +176,16 @@ fun BackupSyncDialog(
     var pendingRestoreRaw by remember { mutableStateOf<String?>(null) }
     var pendingReplaceRaw by remember { mutableStateOf<String?>(null) }
     var intervalExpanded by remember { mutableStateOf(false) }
+    var chooseBackupScope by remember { mutableStateOf(false) }
+    var manualScopeId by remember { mutableStateOf<String?>(null) }
+    var lastAutoError by remember { mutableStateOf(prefs.getString(KEY_AUTO_ERROR, null)) }
+    val availableWorkspaces = remember(workspaces, currentWorkspaceId, currentWorkspaceName) {
+        (workspaces.filter { it.archivedAt == null }.map { it.id to it.name } + listOfNotNull(
+            currentWorkspaceId.takeIf { id -> id.isNotBlank() && workspaces.none { it.id == id } }?.let { id ->
+                id to currentWorkspaceName
+            }
+        )).distinctBy { it.first }
+    }
 
     val manualBackupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -147,12 +198,15 @@ fun BackupSyncDialog(
             takeWritePermission(context, uri)
             scope.launch {
                 busy = true
-                runCatching { writeBackup(context, uri, onExportBackup()) }
-                    .onSuccess {
-                        lastBackupAt = System.currentTimeMillis()
-                        prefs.edit().putLong(KEY_LAST, lastBackupAt).apply()
-                        message = "Backup salvo no Google Drive."
-                    }
+                runCatching {
+                    val json = backupJsonForScope(onExportBackup(), manualScopeId)
+                    writeBackup(context, uri, json)
+                }.onSuccess {
+                    lastBackupAt = System.currentTimeMillis()
+                    prefs.edit().putLong(KEY_LAST, lastBackupAt).apply()
+                    message = if (manualScopeId == null) "Backup de todos os Workspaces salvo no Google Drive."
+                              else "Backup do Workspace selecionado salvo no Google Drive."
+                }
                     .onFailure { message = it.message ?: "Não foi possível fazer o backup." }
                 busy = false
             }
@@ -170,20 +224,24 @@ fun BackupSyncDialog(
                 return@rememberLauncherForActivityResult
             }
             takeWritePermission(context, uri)
-            intervalDays = days
-            prefs.edit()
-                .putInt(KEY_INTERVAL, days)
-                .putString(KEY_URI, uri.toString())
-                .apply()
             scope.launch {
                 busy = true
                 runCatching { writeBackup(context, uri, onExportBackup()) }
                     .onSuccess {
-                        lastBackupAt = System.currentTimeMillis()
-                        prefs.edit().putLong(KEY_LAST, lastBackupAt).apply()
+                        val now = System.currentTimeMillis()
+                        intervalDays = days
+                        lastBackupAt = now
+                        lastAutoError = null
+                        prefs.edit().putInt(KEY_INTERVAL, days)
+                            .putString(KEY_URI, uri.toString())
+                            .putLong(KEY_LAST, now).putLong(KEY_LAST_AUTO, now)
+                            .remove(KEY_AUTO_ERROR).apply()
                         message = "Backup automático configurado para cada $days dias."
                     }
-                    .onFailure { message = it.message ?: "Não foi possível configurar o backup automático." }
+                    .onFailure { failure ->
+                        lastAutoError = failure.message ?: "Nao foi possivel configurar o backup automatico."
+                        message = lastAutoError
+                    }
                 busy = false
             }
         }
@@ -211,13 +269,13 @@ fun BackupSyncDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Backup e sincronização") },
+        title = { Text("Backup e restauração") },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    "O backup inclui todos os Workspaces e os dados financeiros deste aparelho. O Google Drive é usado apenas para backup e restauração.",
+                    "Escolha entre salvar todos os Workspaces ou somente um Workspace. O backup automático continua incluindo todos os Workspaces e é salvo no Google Drive.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(Modifier.height(12.dp))
@@ -225,7 +283,7 @@ fun BackupSyncDialog(
                 Spacer(Modifier.height(12.dp))
 
                 FilledTonalButton(
-                    onClick = { manualBackupLauncher.launch("FinanceApp_Backup_${System.currentTimeMillis()}.json") },
+                    onClick = { chooseBackupScope = true },
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -244,6 +302,16 @@ fun BackupSyncDialog(
                     Text("Restaurar backup")
                 }
                 Spacer(Modifier.height(8.dp))
+                FilledTonalButton(
+                    onClick = onImportData,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Folder, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Importar dados (JSON / CSV / Excel)")
+                }
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = { manageLauncher.launch(arrayOf("application/json", "text/plain")) },
                     enabled = !busy,
@@ -256,7 +324,12 @@ fun BackupSyncDialog(
 
                 Spacer(Modifier.height(16.dp))
                 Text("Backup automático", style = MaterialTheme.typography.labelLarge)
-                Text("Escolha a periodicidade. O arquivo é atualizado quando o FinanceApp for aberto após o prazo.", style = MaterialTheme.typography.bodySmall)
+                Text("Escolha a periodicidade. O arquivo é atualizado no Google Drive quando o FinanceApp for aberto após o prazo.", style = MaterialTheme.typography.bodySmall)
+                lastAutoError?.takeIf { it.isNotBlank() }?.let { failure ->
+                    Spacer(Modifier.height(6.dp))
+                    Text("Última tentativa automática falhou: $failure", color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 Spacer(Modifier.height(8.dp))
 
                 ExposedDropdownMenuBox(
@@ -284,7 +357,8 @@ fun BackupSyncDialog(
                                     intervalExpanded = false
                                     if (days == 0) {
                                         intervalDays = 0
-                                        prefs.edit().putInt(KEY_INTERVAL, 0).remove(KEY_URI).apply()
+                                        lastAutoError = null
+                                        prefs.edit().putInt(KEY_INTERVAL, 0).remove(KEY_URI).remove(KEY_AUTO_ERROR).apply()
                                         message = "Backup automático desativado."
                                     } else {
                                         pendingAutomaticDays = days
@@ -304,6 +378,44 @@ fun BackupSyncDialog(
         confirmButton = { Button(onClick = onDismiss, enabled = !busy) { Text("Concluir") } }
     )
 
+    if (chooseBackupScope) {
+        AlertDialog(
+            onDismissRequest = { chooseBackupScope = false },
+            title = { Text("Qual backup deseja fazer?") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            manualScopeId = null
+                            chooseBackupScope = false
+                            manualBackupLauncher.launch("FinanceApp_Todos_Workspaces_${System.currentTimeMillis()}.json")
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Todos os Workspaces") }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Ou selecione somente uma carteira:", style = MaterialTheme.typography.bodySmall)
+                    availableWorkspaces.forEach { (wsId, wsName) ->
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedButton(
+                            onClick = {
+                                manualScopeId = wsId
+                                chooseBackupScope = false
+                                val fileLabel = wsName.replace(Regex("[^A-Za-z0-9_-]"), "_").take(36)
+                                manualBackupLauncher.launch("FinanceApp_${fileLabel}_${System.currentTimeMillis()}.json")
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(wsName.ifBlank { "Workspace" }) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { chooseBackupScope = false }) { Text("Cancelar") }
+            }
+        )
+    }
+
     pendingRestoreRaw?.let { raw ->
         AlertDialog(
             onDismissRequest = { pendingRestoreRaw = null },
@@ -322,7 +434,10 @@ fun BackupSyncDialog(
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Substituir pelos dados do backup: apaga os dados existentes no aparelho e restaura exatamente o conteúdo do arquivo.",
+                        if (isSingleWorkspaceBackup(raw))
+                            "Substituir somente o Workspace deste arquivo: as outras carteiras permanecem intactas."
+                        else
+                            "Substituir pelos dados do backup: apaga os dados existentes no aparelho e restaura exatamente o conteúdo do arquivo.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(Modifier.height(18.dp))
@@ -378,7 +493,10 @@ fun BackupSyncDialog(
             title = { Text("Substituir dados existentes?") },
             text = {
                 Text(
-                    "Você tem certeza? Isso apagará os dados existentes neste aparelho e restaurará somente os dados do backup."
+                    if (isSingleWorkspaceBackup(raw))
+                        "Você tem certeza? Somente os dados do Workspace contido neste backup serão substituídos. Os demais Workspaces serão preservados."
+                    else
+                        "Você tem certeza? Isso apagará os dados existentes neste aparelho e restaurará somente os dados do backup."
                 )
             },
             confirmButton = {

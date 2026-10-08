@@ -22,9 +22,9 @@ class _ImportDataScreenState extends State<ImportDataScreen>{
   String _norm(String s)=>s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9áàãâéêíóôõúç]'),'');
   String? _guess(String field){
     final aliases=<String,List<String>>{
-      'date':['data','date','dtmov','datamovimento','datetime'], 'description':['descricao','descrição','historico','histórico','memo','description','detalhe'],
-      'amount':['valor','amount','vltransacao','vlmovimento','value'], 'type':['tipo','type','natureza','entrada/saida','entrada/saída','transactiontype'],
-      'category':['categoria','category'], 'account':['conta','banco','account','bank'], 'card':['cartao','cartão','card','creditcard'], 'source':['origem','source']};
+      'date':['data','date','dtmov','datamovimento','datetime','purchasedate','transactiondate','datacompra','datatransacao'], 'description':['descricao','descrição','historico','histórico','memo','description','detalhe','title','nome','merchant','estabelecimento'],
+      'amount':['valor','amount','vltransacao','vlmovimento','value','total','price','preco'], 'type':['tipo','type','natureza','entrada/saida','entrada/saída','transactiontype'],
+      'category':['categoria','category'], 'account':['conta','banco','account','bank'], 'card':['cartao','cartão','card','creditcard','cardid'], 'source':['origem','source']};
     for(final c in columns){final n=_norm(c);if(aliases[field]!.any((a)=>n==_norm(a)||n.contains(_norm(a))))return c;}return null;
   }
   void _autoMap(){for(final f in fields.keys){mapping[f]=_guess(f);}}
@@ -35,7 +35,32 @@ class _ImportDataScreenState extends State<ImportDataScreen>{
     return lines.map((line){final out=<String>[];var cur='';var quoted=false;for(var i=0;i<line.length;i++){final ch=line[i];if(ch=='"'){if(quoted&&i+1<line.length&&line[i+1]=='"'){cur+='"';i++;}else{quoted=!quoted;}}else if(ch==sep&&!quoted){out.add(cur.trim());cur='';}else{cur+=ch;}}out.add(cur.trim());return out;}).toList();
   }
   List<Map<String,String>> _table(List<List<String>> table){if(table.length<2)return [];final h=table.first.map((e)=>e.trim().isEmpty?'Coluna':e.trim()).toList();return table.skip(1).map((r)=><String,String>{for(var i=0;i<h.length;i++)h[i]:i<r.length?r[i].trim():''}).toList();}
-  List<Map<String,String>> _jsonRows(String text){final raw=jsonDecode(text);final list=raw is List?raw:(raw is Map?(raw['transactions']??raw['transacoes']??raw['data']??[raw]):[]);if(list is! List)return [];return list.whereType<Map>().map((e)=>e.map((k,v)=>MapEntry(k.toString(),v?.toString()??''))).toList();}
+  List<Map<String,String>> _jsonRows(String text) {
+    final raw = jsonDecode(text);
+    final found = <Map<String,String>>[];
+    const wrappers = ['transactions','transacoes','movimentacoes','movements','records','items','data','results','entries','despesas','expenses','receitas','income'];
+    void visit(dynamic value, [int depth = 0]) {
+      if (depth > 8 || found.length >= 20000) return;
+      if (value is List) {
+        for (final item in value) { visit(item, depth + 1); }
+      } else if (value is Map) {
+        final keys = value.keys.map((e) => e.toString().toLowerCase()).toSet();
+        final hasAmount = keys.any((k) => ['amount','valor','value','total','price','preco'].contains(k));
+        final hasDate = keys.any((k) => ['date','data','purchase_date','transaction_date','datacompra','data_compra'].contains(k));
+        if (hasAmount && hasDate) {
+          found.add(value.map((k,v) => MapEntry(k.toString(), v == null ? '' : v.toString())));
+          return;
+        }
+        for (final entry in value.entries) {
+          if (wrappers.contains(entry.key.toString().toLowerCase()) || entry.value is List || entry.value is Map) {
+            visit(entry.value, depth + 1);
+          }
+        }
+      }
+    }
+    visit(raw);
+    return found;
+  }
   List<Map<String,String>> _xmlRows(String text){final doc=XmlDocument.parse(text);var nodes=doc.descendants.whereType<XmlElement>().where((e)=>['transaction','transacao','movimento','item','record'].contains(e.name.local.toLowerCase())).toList();if(nodes.isEmpty&&doc.rootElement.children.whereType<XmlElement>().isNotEmpty)nodes=doc.rootElement.children.whereType<XmlElement>().toList();return nodes.map((e)=><String,String>{for(final c in e.children.whereType<XmlElement>())c.name.local:c.innerText.trim(),for(final a in e.attributes)a.name.local:a.value}).where((e)=>e.isNotEmpty).toList();}
   Future<void> _pick() async{
     setState(()=>error=null);final result=await FilePicker.platform.pickFiles(type:FileType.custom,allowedExtensions:['xlsx','csv','json','txt','xml'],withData:true);if(result==null)return;final f=result.files.single;final bytes=f.bytes;if(bytes==null){setState(()=>error='Não foi possível ler o arquivo.');return;}
@@ -49,7 +74,7 @@ class _ImportDataScreenState extends State<ImportDataScreen>{
   String _type(String? raw,double amount){var n=(raw??'').trim().toLowerCase();const accents={'á':'a','à':'a','ã':'a','â':'a','ä':'a','é':'e','è':'e','ê':'e','ë':'e','í':'i','ì':'i','î':'i','ï':'i','ó':'o','ò':'o','õ':'o','ô':'o','ö':'o','ú':'u','ù':'u','û':'u','ü':'u','ç':'c'};accents.forEach((a,b)=>n=n.replaceAll(a,b));n=n.replaceAll(RegExp(r'[^a-z0-9]'),'');if(n.contains('entrada')||n.contains('receita')||n.contains('income')||n.contains('credit')||n.contains('credito'))return 'income';if(n.contains('saida')||n.contains('despesa')||n.contains('expense')||n.contains('debit')||n.contains('debito'))return 'expense';return amount<0?'expense':'income';}
   FinancialAccount? _account(String? raw){if(raw!=null&&raw.isNotEmpty){final n=_norm(raw);for(final a in widget.snapshot.accounts){if(_norm(a.institutionName).contains(n)||n.contains(_norm(a.institutionName))||_norm(a.accountName??'')==n)return a;}}if(fallbackAccountId!=null){for(final a in widget.snapshot.accounts){if(a.id==fallbackAccountId)return a;}}return null;}
   FinanceCategory? _category(String? raw){if(raw==null)return null;final n=_norm(raw);for(final c in widget.snapshot.categories){if(_norm(c.name)==n)return c;}return null;}
-  CreditCardInfo? _card(String? raw){if(raw==null||raw.isEmpty)return null;final n=_norm(raw);for(final c in widget.snapshot.cards){if(n.contains(_norm(c.lastFour))||n.contains(_norm(c.nickname??''))||n.contains(_norm(c.bankName)))return c;}return null;}
+  CreditCardInfo? _card(String? raw){if(raw==null||raw.trim().isEmpty)return null;final n=_norm(raw);if(n.isEmpty)return null;for(final c in widget.snapshot.cards){final last=_norm(c.lastFour);final nick=_norm(c.nickname??'');final bank=_norm(c.bankName);if((last.isNotEmpty&&n.contains(last))||(nick.isNotEmpty&&n==nick)||(bank.isNotEmpty&&n==bank))return c;}return null;}
   List<FinancialTransaction> _valid(){final out=<FinancialTransaction>[];var seed=DateTime.now().microsecondsSinceEpoch;for(final r in rows){final amount=_money(_v(r,'amount'));final date=_date(_v(r,'date'));if(amount==null||date==null||amount==0)continue;final card=_card(_v(r,'card'));final account=_account(_v(r,'account'));final desc=_v(r,'description');out.add(FinancialTransaction(id:seed++,date:date,description:(desc==null||desc.isEmpty)?'Importação de arquivo':desc,amount:amount.abs(),type:card!=null?'expense':_type(_v(r,'type'),amount),accountId:account?.id,categoryId:_category(_v(r,'category'))?.id,importCategoryName:_v(r,'category'),cardId:card?.id,source:(_v(r,'source')?.toLowerCase().contains('open')??false)?'open_finance':'manual'));}return out;}
   String _sig(FinancialTransaction t)=>'${t.date}|${_norm(t.description)}|${t.amount.toStringAsFixed(2)}|${t.type}|${t.accountId}|${t.cardId}';
   Future<void> _import() async{final valid=_valid();final existing=widget.snapshot.transactions.map(_sig).toSet();final unique=<FinancialTransaction>[];final seen=<String>{...existing};for(final t in valid){if(seen.add(_sig(t)))unique.add(t);}if(unique.isEmpty){ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Nenhuma transação nova para importar.')));return;}final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Confirmar importação'),content:Text('${unique.length} transação(ões) serão importadas. ${valid.length-unique.length} possível(is) duplicada(s) serão ignoradas.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('Cancelar')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('Importar'))]))??false;if(!ok)return;setState(()=>busy=true);var done=0;try{await widget.onImportTransactions(unique);done=unique.length;await widget.onRefresh();if(mounted){ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('$done transação(ões) importada(s) com sucesso.')));Navigator.pop(context,true);}}catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('Importados $done de ${unique.length}. Erro: ${e.toString().replaceFirst('Exception: ','')}')));}finally{if(mounted)setState(()=>busy=false);}}

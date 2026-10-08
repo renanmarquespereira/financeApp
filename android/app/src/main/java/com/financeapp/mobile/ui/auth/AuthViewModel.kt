@@ -70,26 +70,10 @@ class AuthViewModel @Inject constructor(
     val state: StateFlow<AuthUiState> = _state.asStateFlow()
 
     init {
-        if (repository.hasPersistedSession() && !repository.isGuest()) {
-            viewModelScope.launch {
-                try {
-                    repository.refreshPersistedSession()
-                    _state.value = _state.value.copy(offlineAccess = false)
-                } catch (e: retrofit2.HttpException) {
-                    if (e.code() == 401 || e.code() == 403) {
-                        repository.logout()
-                        _state.value = AuthUiState(authenticated = false)
-                    }
-                    // Outros erros HTTP não expulsam o usuário do cache local.
-                } catch (_: java.io.IOException) {
-                    _state.value = _state.value.copy(offlineAccess = true)
-                } catch (_: Exception) {
-                    // Falha temporária de renovação não bloqueia a abertura local.
-                }
-            }
-        }
+        // Modo standalone: sem login e sem servidor para abrir o aplicativo.
+        repository.enterGuest()
+        _state.value = AuthUiState(authenticated = true, offlineAccess = true)
     }
-
     private val recoveryMutable = MutableStateFlow(PasswordRecoveryState())
     val recovery = recoveryMutable.asStateFlow()
     fun clearRecovery() { if (!recoveryMutable.value.busy) recoveryMutable.value = PasswordRecoveryState() }

@@ -36,7 +36,26 @@ class SessionManager @Inject constructor(
         prefs.edit().putBoolean("guest_active", true).commit()
         scopeState.value = storedScope()
     }
-    fun localUserId(): Int? = if (isGuest()) 0 else tokenUserId(accessToken()) ?: tokenUserId(refreshToken())
+    private fun standaloneOwnerId(): Int? =
+        if (prefs.contains("standalone_owner_id")) prefs.getInt("standalone_owner_id", 0) else null
+
+    @Synchronized
+    fun enableStandaloneMode() {
+        val owner =
+            standaloneOwnerId()
+                ?: (if (isGuest()) 0 else tokenUserId(accessToken()) ?: tokenUserId(refreshToken()) ?: 0)
+
+        prefs.edit()
+            .putInt("standalone_owner_id", owner)
+            .putBoolean("standalone_mode", true)
+            .apply()
+
+        scopeState.value = storedScope()
+    }
+
+    fun localUserId(): Int? =
+        standaloneOwnerId()
+            ?: if (isGuest()) 0 else tokenUserId(accessToken()) ?: tokenUserId(refreshToken())
 
     private fun storedScope(): WorkspaceScope? = localUserId()?.let { id ->
         WorkspaceScope(id, prefs.getString("workspace_$id", null) ?: "default-$id")
@@ -233,9 +252,9 @@ class SessionManager @Inject constructor(
 
     @Synchronized
     fun clear() {
-        val remembered = prefs.all.filterKeys { it.startsWith("workspace_") || it == "guest_transfer_pending" }
+        val remembered = prefs.all.filterKeys { it.startsWith("workspace_") || it == "guest_transfer_pending" || it == "standalone_owner_id" || it == "standalone_mode" }
         val editor = prefs.edit().clear()
-        remembered.forEach { (key, value) -> if (value is String) editor.putString(key, value) else if (value is Boolean) editor.putBoolean(key,value) }
+        remembered.forEach { (key, value) -> when (value) { is String -> editor.putString(key, value); is Boolean -> editor.putBoolean(key,value); is Int -> editor.putInt(key,value) } }
         editor.apply()
         scopeState.value = null
     }

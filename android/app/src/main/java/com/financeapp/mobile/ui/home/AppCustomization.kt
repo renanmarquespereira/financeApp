@@ -48,7 +48,7 @@ fun saveCustomization(context: Context, userKey:String, c:AppCustomization){
 @Composable
 fun AppCustomizationDialog(value:AppCustomization,onThemeChange:(String)->Unit,onSave:(AppCustomization)->Unit,onDismiss:()->Unit){
     var c by remember(value){ mutableStateOf(value) }
-    val navLabels=mapOf("DASHBOARD" to "Dashboard","FORECAST" to "Previsão / Planejamento","ACCOUNTS" to "Contas / Cartões")
+    val navLabels=mapOf("DASHBOARD" to "Dashboard","FORECAST" to "Previsão / Planejamento","ACCOUNTS" to "Bancos / Cartões")
     val dashLabels=mapOf("CURRENT_VALUE" to "Valor atual","INCOME" to "Entradas","EXPENSES" to "Saídas","INVOICES" to "Faturas de cartão","BUDGETS" to "Orçamentos","BIGGEST_SPEND" to "Maior gasto do mês","GOALS" to "Metas financeiras","LATEST" to "Últimas transações","QUICK_ACTIONS" to "Ações rápidas")
     AlertDialog(onDismissRequest=onDismiss,title={Text("Configurações do aplicativo")},text={
         Column(Modifier.fillMaxWidth().heightIn(max=520.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){

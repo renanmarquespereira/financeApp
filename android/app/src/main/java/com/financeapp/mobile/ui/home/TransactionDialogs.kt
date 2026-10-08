@@ -76,7 +76,10 @@ internal fun TransactionDetailsDialog(
         onDismissRequest = onDismiss,
         title = { Text(tx.description) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text(
                     NumberFormat
                         .getCurrencyInstance(Locale("pt", "BR"))
@@ -157,7 +160,7 @@ internal fun TransactionDetailsDialog(
             }
         },
         confirmButton = {
-            if (tx.source == "manual") {
+            if (tx.source == "manual" || (tx.cardId != null && tx.source != "card_payment" && tx.source != "open_finance")) {
                 Button(onClick = onEdit) {
                     Icon(Icons.Default.Edit, null)
                     Spacer(Modifier.width(6.dp))
@@ -233,9 +236,15 @@ internal fun EditTransactionDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Editar transação") },
+        title = { Text(if (tx.cardId != null) "Editar compra do cartão" else "Editar transação") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (tx.cardId != null) {
+                    Text("Compra vinculada ao cartão #${tx.cardId}. Este editor altera descrição, valor, data e categoria. Troca de cartão e parcelamento ainda não estão disponíveis.", style = MaterialTheme.typography.bodySmall)
+                }
                 Box {
                     OutlinedButton(
                         onClick = { accountMenu = true },

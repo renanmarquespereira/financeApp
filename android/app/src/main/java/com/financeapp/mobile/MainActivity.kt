@@ -7,6 +7,7 @@ import androidx.core.content.ContextCompat
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
@@ -22,7 +23,9 @@ import com.financeapp.mobile.ui.home.WorkspaceViewModel
 import com.financeapp.mobile.ui.home.WorkspaceManagerDialog
 import com.financeapp.mobile.ui.home.HomeScreen
 import com.financeapp.mobile.ui.home.HomeViewModel
+import com.financeapp.mobile.ui.entry.EntrySliderScreen
 import com.financeapp.mobile.ui.theme.FinanceTheme
+import com.financeapp.mobile.util.SessionManager
 import com.financeapp.mobile.ui.legal.LegalAcceptanceStore
 import com.financeapp.mobile.ui.legal.LegalConsentDialog
 import com.financeapp.mobile.ui.onboarding.OnboardingScreen
@@ -30,9 +33,12 @@ import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
+
+    @Inject lateinit var sessionManager: SessionManager
 
     private var appUnlocked by mutableStateOf(true)
     private var appLockEnabledState by mutableStateOf(false)
@@ -92,6 +98,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        sessionManager.enableStandaloneMode()
 
         // Em um novo processo, um app protegido começa bloqueado.
         appLockEnabledState = isAppLockEnabled()
@@ -101,6 +108,7 @@ class MainActivity : FragmentActivity() {
             var themeMode by remember { mutableStateOf("SYSTEM") }
             FinanceTheme(themeMode = themeMode) {
                 val onboardingPrefs = remember { getSharedPreferences("financeapp_onboarding", MODE_PRIVATE) }
+                var entryGranted by rememberSaveable { mutableStateOf(false) }
                 var showOnboarding by remember {
                     mutableStateOf(!onboardingPrefs.getBoolean("v1_done", false))
                 }
@@ -116,17 +124,17 @@ class MainActivity : FragmentActivity() {
                             showOnboarding = false
                         }
                     )
+                } else if (!entryGranted) {
+                    EntrySliderScreen(onEnter = { entryGranted = true })
                 } else {
-                var loggedIn by remember { mutableStateOf(false) }
+                var loggedIn by remember { mutableStateOf(true) }
                 var authStartRegister by remember { mutableStateOf(false) }
                 var legalAcceptedForThisVersion by remember { mutableStateOf(LegalAcceptanceStore.acceptedCurrent(this@MainActivity)) }
 
                 val authViewModel: AuthViewModel = hiltViewModel()
                 val authState by authViewModel.state.collectAsState()
 
-                LaunchedEffect(authState.authenticated) {
-                    loggedIn = authState.authenticated
-                }
+                // Modo standalone: nunca exibe a antiga tela de login.
 
                 var showRecovery by remember { mutableStateOf(false) }
                 val recoveryState by authViewModel.recovery.collectAsState()
@@ -167,7 +175,7 @@ class MainActivity : FragmentActivity() {
                     val workspaces by workspaceViewModel.workspaces.collectAsState()
                     val workspaceState by workspaceViewModel.state.collectAsState()
                     var showWorkspaces by remember { mutableStateOf(false) }
-                    LaunchedEffect(activeWorkspace?.userId) { workspaceViewModel.refresh() }
+                    // Workspaces locais: sem refresh de servidor.
                     var showGuestTransfer by remember { mutableStateOf(false) }
                     LaunchedEffect(activeWorkspace?.userId) {
                         showGuestTransfer = activeWorkspace?.userId?.let { it > 0 } == true && workspaceViewModel.guestTransferPending()
@@ -209,15 +217,15 @@ class MainActivity : FragmentActivity() {
 
                     HomeScreen(
                         workspaceId = activeWorkspace?.workspaceId ?: "guest-local",
-                        workspaceName = if (activeWorkspace?.userId == 0) "Visitante" else workspaceName,
-                        guest = activeWorkspace?.userId == 0,
-                        guestFrozen = workspaceViewModel.guestTransferFrozen(),
-                        onGuestRegister = { authStartRegister = true; authViewModel.leaveGuestForRegistration() },
-                        onGuestLogin = { authStartRegister = false; authViewModel.leaveGuestForRegistration() },
+                        workspaceName = workspaceName,
+                        guest = true,
+                        guestFrozen = false,
+                        onGuestRegister = { },
+                        onGuestLogin = { },
                         onCreateGuestAccount = homeViewModel::createGuestAccount,
                         onCreateManualAccount = homeViewModel::createManualAccount,
                         onDeleteGuestAccount = homeViewModel::deleteGuestAccount,
-                        onManageWorkspaces = { workspaceViewModel.clearError(); showWorkspaces = true; workspaceViewModel.refresh() },
+                        onManageWorkspaces = { workspaceViewModel.clearError(); showWorkspaces = true },
                         onUpdateProfilePhoto = homeViewModel::updateProfilePhoto,
                         onLoadPersonalProfile = homeViewModel::currentUserProfile,
                         onUpdatePersonalProfile = homeViewModel::updatePersonalProfile,
@@ -236,7 +244,7 @@ class MainActivity : FragmentActivity() {
                         goals = goals,
                         goalContributions =
                             goalContributions,
-                        onRefresh = homeViewModel::refresh,
+                        onRefresh = { },
                         onConnectBank = homeViewModel::connectBank,
                         onDismissBankConnection =
                             homeViewModel::dismissBankConnection,
@@ -304,13 +312,7 @@ class MainActivity : FragmentActivity() {
                                 } else done()
                             }
                         },
-                        onLogout = {
-                            homeViewModel.logout {
-                                authViewModel.resetAfterLogout()
-                                authStartRegister = false
-                                loggedIn = false
-                            }
-                        },
+                        onLogout = { entryGranted = false },
                         onLoadForecastState = homeViewModel::forecastState,
                         onSaveForecastState = homeViewModel::saveForecastState,
                         onClearMessage = homeViewModel::clearMessage
@@ -319,7 +321,7 @@ class MainActivity : FragmentActivity() {
                     }
                     if (showWorkspaces) WorkspaceManagerDialog(
                         workspaces = workspaces, activeId = activeWorkspace?.workspaceId, state = workspaceState,
-                        onDismiss = { showWorkspaces = false }, onRefresh = workspaceViewModel::refresh,
+                        onDismiss = { showWorkspaces = false }, onRefresh = { },
                         onClearError = workspaceViewModel::clearError, onSelect = workspaceViewModel::select,
                         onCreate = workspaceViewModel::create, onEdit = workspaceViewModel::edit,
                         onArchive = workspaceViewModel::archive, onRestore = workspaceViewModel::restore,

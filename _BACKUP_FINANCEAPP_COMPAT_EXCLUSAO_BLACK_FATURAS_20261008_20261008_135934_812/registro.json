@@ -1,0 +1,11 @@
+{
+    "patch":  "FINANCEAPP_COMPAT_EXCLUSAO_BLACK_FATURAS_20261008",
+    "project":  "D:\\RENAN_APP\\FinanceApp_Consolidado",
+    "date":  "2026-10-08T13:59:34.9492579-03:00",
+    "files":  [
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/HomeScreen.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/InvoiceCenterScreen.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/AccountsCardsScreen.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/TransactionsScreen.kt"
+              ]
+}

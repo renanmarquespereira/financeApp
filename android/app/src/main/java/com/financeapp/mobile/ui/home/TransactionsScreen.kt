@@ -95,6 +95,7 @@ internal fun MonthlyTransactionsScreen(
             card.active
         }
     }
+    val cardById = remember(cards) { cards.associateBy { it.id } }
 
     val locale = Locale("pt", "BR")
     val currency = remember {
@@ -124,6 +125,16 @@ internal fun MonthlyTransactionsScreen(
 
     var transactionViewTab by remember {
         mutableStateOf(TransactionViewTab.EXPENSE)
+    }
+
+    // Em Cartoes, o seletor indica o mes da fatura (vencimento).
+    // Nas demais abas permanece o mes da transacao.
+    fun transactionGroupMonth(tx: TransactionEntity): YearMonth? {
+        if (transactionViewTab == TransactionViewTab.CARD) {
+            val card = tx.cardId?.let { cardById[it] }
+            if (card != null) return cardBillingMonth(tx, card)
+        }
+        return transactionsParseTxDate(tx.date)?.let(YearMonth::from)
     }
 
     var quickCardId by remember {
@@ -455,14 +466,10 @@ internal fun MonthlyTransactionsScreen(
     /*
      * Faixa de meses da visualização normal.
      */
-    val monthRange = remember(scopedAllTransactions) {
+    val monthRange = remember(scopedAllTransactions, cards, transactionViewTab) {
         val current = YearMonth.now()
 
-        val parsed = scopedAllTransactions
-            .mapNotNull {
-                transactionsParseTxDate(it.date)
-                    ?.let(YearMonth::from)
-            }
+        val parsed = scopedAllTransactions.mapNotNull { transactionGroupMonth(it) }
 
         val oldestWithData =
             parsed.minOrNull()
@@ -549,12 +556,7 @@ internal fun MonthlyTransactionsScreen(
                 // Não force a aba Cartões: compras de cartão também pertencem
                 // à visão geral de Despesas e devem continuar visíveis nela.
 
-                val highlightedMonth =
-                    parseTxDate(
-                        highlighted.date
-                    )?.let(
-                        YearMonth::from
-                    )
+                val highlightedMonth = transactionGroupMonth(highlighted)
 
                 if (highlightedMonth != null) {
                     val target =
@@ -583,15 +585,13 @@ internal fun MonthlyTransactionsScreen(
         scopedTransactions,
         selectedMonth,
         dateSortOrder,
-        highlightedTransactionId
+        highlightedTransactionId,
+        cards,
+        transactionViewTab
     ) {
         val sorted =
             scopedTransactions
-                .filter {
-                    transactionsParseTxDate(it.date)
-                        ?.let(YearMonth::from) ==
-                        selectedMonth
-                }
+                .filter { transactionGroupMonth(it) == selectedMonth }
                 .sortedWith(
                     compareBy<TransactionEntity> {
                         transactionsParseTxDate(it.date)
@@ -737,6 +737,9 @@ internal fun MonthlyTransactionsScreen(
 
             hasPeriodFilter ->
                 "Movimentação do período"
+
+            transactionViewTab == TransactionViewTab.CARD ->
+                "Fatura de ${selectedMonth.month.getDisplayName(TextStyle.FULL, locale).replaceFirstChar { it.uppercase() }} • ${selectedMonth.year}"
 
             else ->
                 if (selectedMonth == YearMonth.now()) {
@@ -1981,15 +1984,7 @@ internal fun MonthlyTransactionsScreen(
 
                 val pageTransactions =
                     scopedTransactions
-                        .filter {
-                            parseTxDate(
-                                it.date
-                            )
-                                ?.let(
-                                    YearMonth::from
-                                ) ==
-                                pageMonth
-                        }
+                        .filter { transactionGroupMonth(it) == pageMonth }
                         .sortedWith(
                             compareBy<TransactionEntity> {
                                 parseTxDate(

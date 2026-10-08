@@ -1,0 +1,67 @@
+{
+    "patch":  "EXCLUSAO_LOCAL_COM_EMAIL_20261008_V1",
+    "project":  "D:\\RENAN_APP\\FinanceApp_Consolidado",
+    "created":  "2026-10-08T12:35:56.6673598-03:00",
+    "files":  [
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/ui/home/GuestDialogs.kt",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/ui/home/HomeScreen.kt",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/ui/home/WorkspaceManagerDialog.kt",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/FinanceApplication.kt",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "android/app/src/main/res/xml/backup_rules.xml",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "android/app/src/main/res/xml/data_extraction_rules.xml",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "backend/app/routers/user_data.py",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/ui/home/AccountsCardsScreen.kt",
+                      "existed":  true
+                  },
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/data/deletion/DeletionPlan.kt",
+                      "existed":  false
+                  },
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/data/deletion/LocalDataDeletionRepository.kt",
+                      "existed":  false
+                  },
+                  {
+                      "path":  "android/app/src/main/java/com/financeapp/mobile/ui/home/DataDeletionDialog.kt",
+                      "existed":  false
+                  },
+                  {
+                      "path":  "android/app/src/test/java/com/financeapp/mobile/data/deletion/DeletionPlannerTest.kt",
+                      "existed":  false
+                  },
+                  {
+                      "path":  "backend/app/models/local_deletion.py",
+                      "existed":  false
+                  },
+                  {
+                      "path":  "backend/app/routers/local_deletion.py",
+                      "existed":  false
+                  },
+                  {
+                      "path":  "backend/tests/test_local_deletion.py",
+                      "existed":  false
+                  }
+              ]
+}

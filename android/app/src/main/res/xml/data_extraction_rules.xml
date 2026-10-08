@@ -17,7 +17,8 @@
         <exclude domain="file" path="guest-transfer.json.bak" />
         <exclude domain="file" path="guest-transfer.json.new" />
         <exclude domain="sharedpref" path="finance_session.xml" />
-    </cloud-backup>
+        <exclude domain="sharedpref" path="finance_data_deletion_security.xml" />
+</cloud-backup>
 
     <device-transfer>
         <exclude
@@ -36,5 +37,6 @@
         <exclude domain="file" path="guest-transfer.json.bak" />
         <exclude domain="file" path="guest-transfer.json.new" />
         <exclude domain="sharedpref" path="finance_session.xml" />
-    </device-transfer>
+        <exclude domain="sharedpref" path="finance_data_deletion_security.xml" />
+</device-transfer>
 </data-extraction-rules>

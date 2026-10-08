@@ -4,7 +4,7 @@ import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
 
 data class WorkspaceScope(val userId: Int, val workspaceId: String) {
-    init { require((userId > 0 && workspaceId.isNotBlank()) || (userId == 0 && workspaceId == "default-0")) }
+    init { require(userId >= 0 && workspaceId.isNotBlank()) }
 }
 
 data class WorkspaceOperation(val scope: WorkspaceScope, val accessToken: String?) {

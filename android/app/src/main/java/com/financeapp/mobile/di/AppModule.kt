@@ -281,7 +281,7 @@ object AppModule {
     fun provideOkHttp(session: SessionManager): OkHttpClient {
         val authInterceptor = Interceptor { chain ->
             if (session.isGuest() || com.financeapp.mobile.util.WorkspaceOperation.currentOrNull()?.userId == 0) {
-                throw java.io.IOException("Modo visitante: dados salvos somente neste aparelho. Crie uma conta para usar os serviços online.")
+                throw java.io.IOException("Modo visitante: dados salvos . Crie uma conta para usar os serviços online.")
             }
             val token = session.accessToken()
             val request = chain.request().newBuilder().apply {

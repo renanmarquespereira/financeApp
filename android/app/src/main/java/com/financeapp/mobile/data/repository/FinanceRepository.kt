@@ -101,7 +101,8 @@ private data class TransactionUpdatePayload(
     val description: String,
     val amount: Double,
     val transactionType: String,
-    val status: String
+    val status: String,
+    val purchaseDate: String? = null
 )
 
 private data class TransactionCategoryUpdatePayload(
@@ -215,110 +216,154 @@ class FinanceRepository @Inject constructor(
         }
     }
 
-    suspend fun requestWorkspaceDeleteBatch(ids: List<String>) = manageWorkspaces { operation ->
+    suspend fun requestWorkspaceDeleteBatch(ids: List<String>): String {
+        val userId = session.localUserId() ?: 0
         val selected = ids.distinct()
-        check(selected.isNotEmpty()) { "Selecione ao menos um workspace" }
-        val rows = dao.workspacesForUser(operation.userId).filter { it.id in selected }
-        check(rows.size == selected.size) { "Atualize a lista de workspaces" }
-        val activeRemaining = dao.workspacesForUser(operation.userId).count { it.archivedAt == null && it.id !in selected }
-        check(activeRemaining >= 1) { "Você precisa manter pelo menos um workspace ativo." }
-        api.workspaceBatchDeleteCode(com.financeapp.mobile.data.remote.WorkspaceBatchDeleteRequest(selected)).message
+        check(selected.isNotEmpty()) { "Selecione ao menos um workspace." }
+        val rows = dao.workspacesForUser(userId)
+        check(rows.count { it.id in selected } == selected.size) { "Workspace não encontrado." }
+        val remaining = rows.count { it.archivedAt == null && it.id !in selected }
+        check(remaining >= 1) { "Você precisa manter pelo menos um workspace ativo." }
+        return "LOCAL"
     }
 
-    suspend fun confirmWorkspaceDeleteBatch(ids: List<String>, code: String) = manageWorkspaces { operation ->
+    suspend fun confirmWorkspaceDeleteBatch(ids: List<String>, code: String) {
+        val userId = session.localUserId() ?: 0
         val selected = ids.distinct()
-        api.workspaceBatchDeleteConfirm(com.financeapp.mobile.data.remote.WorkspaceBatchDeleteRequest(selected), code)
-        val fallback = dao.workspacesForUser(operation.userId).firstOrNull { it.archivedAt == null && it.id !in selected }
-        selected.forEach { purgeWorkspace(operation.userId, it) }
+        val rows = dao.workspacesForUser(userId)
+        val fallback = rows.firstOrNull { it.archivedAt == null && it.id !in selected }
+
+        selected.forEach { purgeWorkspace(userId, it) }
+
         if (session.workspaceScope.value?.workspaceId in selected && fallback != null) {
-            session.activateWorkspace(WorkspaceScope(operation.userId, fallback.id))
+            session.activateWorkspace(WorkspaceScope(userId, fallback.id))
         }
     }
 
-    suspend fun requestWorkspaceDelete(id: String) = manageWorkspaces { operation ->
-        val row = dao.workspacesForUser(operation.userId).firstOrNull { it.id == id } ?: error("Atualize a lista")
-        val activeRemaining = dao.workspacesForUser(operation.userId).count { it.archivedAt == null && it.id != row.id }
-        check(row.archivedAt != null || activeRemaining >= 1) { "Você precisa manter pelo menos um workspace ativo." }
-        api.workspaceDeleteCode(id).message
+    suspend fun requestWorkspaceDelete(id: String): String {
+        val userId = session.localUserId() ?: 0
+        val rows = dao.workspacesForUser(userId)
+        val row = rows.firstOrNull { it.id == id } ?: error("Workspace não encontrado.")
+        val remaining = rows.count { it.archivedAt == null && it.id != row.id }
+        check(row.archivedAt != null || remaining >= 1) {
+            "Você precisa manter pelo menos um workspace ativo."
+        }
+        return "LOCAL"
     }
 
-    suspend fun confirmWorkspaceDelete(id: String, code: String) = manageWorkspaces { operation ->
-        api.workspaceDeleteConfirm(id, com.financeapp.mobile.data.remote.SecurityCodeRequest(code))
-        val fallback = dao.workspacesForUser(operation.userId).firstOrNull { it.archivedAt == null && it.id != id }
-        purgeWorkspace(operation.userId, id)
-        if (session.workspaceScope.value == WorkspaceScope(operation.userId, id) && fallback != null) {
-            session.activateWorkspace(WorkspaceScope(operation.userId, fallback.id))
+    suspend fun confirmWorkspaceDelete(id: String, code: String) {
+        val userId = session.localUserId() ?: 0
+        val rows = dao.workspacesForUser(userId)
+        val fallback = rows.firstOrNull { it.archivedAt == null && it.id != id }
+
+        purgeWorkspace(userId, id)
+
+        if (session.workspaceScope.value?.workspaceId == id && fallback != null) {
+            session.activateWorkspace(WorkspaceScope(userId, fallback.id))
         }
     }
 
-    suspend fun refreshWorkspaces() = manageWorkspaces { operation ->
-        if (operation.userId == 0) {
-            dao.upsertWorkspaces(listOf(WorkspaceEntity(0,"default-0","Visitante","personal",true,null)))
-            return@manageWorkspaces
+    suspend fun refreshWorkspaces() {
+        val userId = session.localUserId() ?: 0
+        var rows = dao.workspacesForUser(userId)
+
+        if (rows.isEmpty()) {
+            dao.upsertWorkspaces(
+                listOf(
+                    WorkspaceEntity(
+                        userId = userId,
+                        id = "default-$userId",
+                        name = "Pessoal",
+                        kind = "personal",
+                        isDefault = true,
+                        archivedAt = null
+                    )
+                )
+            )
+            rows = dao.workspacesForUser(userId)
         }
-        val rows = api.workspaces()
-        require(rows.all { it.userId == operation.userId })
-        reconcileWorkspaces(rows)
-        val current = session.requireWorkspace()
-        check(current.userId == operation.userId)
-        if (rows.none { it.id == current.workspaceId && it.archivedAt == null }) {
-            val localOnly = dao.workspacesForUser(operation.userId).firstOrNull {
-                it.id == current.workspaceId && !it.isDefault && it.archivedAt == null
-            }
-            if (localOnly == null) {
-                val fallback = rows.first { it.archivedAt == null }
-                session.activateWorkspace(WorkspaceScope(operation.userId, fallback.id))
-            }
+
+        val current = session.workspaceScope.value
+        val currentValid =
+            current?.userId == userId &&
+                rows.any { it.id == current.workspaceId && it.archivedAt == null }
+
+        if (!currentValid) {
+            val fallback =
+                rows.firstOrNull { it.archivedAt == null }
+                    ?: rows.first()
+            session.activateWorkspace(WorkspaceScope(userId, fallback.id))
         }
     }
 
     suspend fun selectWorkspace(id: String) {
-        // Running requests already captured their original scope. A local switch
-        // need not wait for their network timeout; it only changes future requests.
-        val operation = session.captureOperation()
-        val row = dao.workspacesForUser(operation.userId).firstOrNull { it.id == id }
-            ?: error("Conecte-se à internet para carregar este workspace")
-        check(row.archivedAt == null) { "Restaure o workspace antes de abri-lo" }
-        session.activateWorkspace(WorkspaceScope(operation.userId, row.id))
+        val userId = session.localUserId() ?: 0
+        val row =
+            dao.workspacesForUser(userId)
+                .firstOrNull { it.id == id }
+                ?: error("Workspace não encontrado.")
+        check(row.archivedAt == null) { "Restaure o workspace antes de abri-lo." }
+        session.activateWorkspace(WorkspaceScope(userId, row.id))
     }
 
-    suspend fun createWorkspace(name: String, kind: String, clientId: String) = manageWorkspaces { operation ->
+    suspend fun createWorkspace(name: String, kind: String, clientId: String) {
+        val userId = session.localUserId() ?: 0
         val cleanName = name.trim()
-        require(cleanName.isNotBlank()) { "Informe o nome do workspace" }
-        val local = WorkspaceEntity(operation.userId, clientId, cleanName, kind, false, null)
-        dao.upsertWorkspaces(listOf(local))
-        session.activateWorkspace(WorkspaceScope(operation.userId, clientId))
-        // Offline-first: a criação remota é feita pelo worker quando houver rede.
-        runCatching { scheduleOfflineSync() }
+        require(cleanName.isNotBlank()) { "Informe o nome do workspace." }
+
+        dao.upsertWorkspaces(
+            listOf(
+                WorkspaceEntity(
+                    userId = userId,
+                    id = clientId,
+                    name = cleanName,
+                    kind = kind,
+                    isDefault = false,
+                    archivedAt = null
+                )
+            )
+        )
+        session.activateWorkspace(WorkspaceScope(userId, clientId))
     }
 
-    suspend fun editWorkspace(id: String, name: String, kind: String) = manageWorkspaces {
-        cacheWorkspace(api.editWorkspace(id, com.financeapp.mobile.data.remote.WorkspaceEditRequest(name.trim(), kind)))
+    suspend fun editWorkspace(id: String, name: String, kind: String) {
+        val userId = session.localUserId() ?: 0
+        val row =
+            dao.workspacesForUser(userId)
+                .firstOrNull { it.id == id }
+                ?: error("Workspace não encontrado.")
+        val cleanName = name.trim()
+        require(cleanName.isNotBlank()) { "Informe o nome do workspace." }
+        dao.upsertWorkspaces(listOf(row.copy(name = cleanName, kind = kind)))
     }
 
     suspend fun archiveWorkspace(id: String) {
-        // Sem excecao para default-<userId>: antes de arquivar, tenta enviar
-        // qualquer fila offline e depois aplica apenas a regra de manter 1 ativo.
-        val captured = session.captureOperation()
-        if (captured.userId > 0) runCatching { syncPendingNow() }
-        manageWorkspaces { operation ->
-            val row = dao.workspacesForUser(operation.userId).firstOrNull { it.id == id } ?: error("Workspace não encontrado")
-            val activeRows = dao.workspacesForUser(operation.userId).filter { it.archivedAt == null }
-            check(row.archivedAt != null || activeRows.count { it.id != id } >= 1) { "Você precisa manter pelo menos um workspace ativo." }
-            check(dao.pendingSyncCountNow(operation.userId, id) == 0) {
-                "Não foi possível sincronizar todas as alterações deste workspace antes de arquivar. Conecte-se e tente novamente."
-            }
-            val fallback = dao.workspacesForUser(operation.userId).firstOrNull { it.archivedAt == null && it.id != id }
-                ?: error("Você precisa manter pelo menos um workspace ativo.")
-            cacheWorkspace(api.archiveWorkspace(id))
-            if (session.requireWorkspace() == WorkspaceScope(operation.userId, id)) {
-                session.activateWorkspace(WorkspaceScope(operation.userId, fallback.id))
-            }
+        val userId = session.localUserId() ?: 0
+        val rows = dao.workspacesForUser(userId)
+        val row = rows.firstOrNull { it.id == id } ?: error("Workspace não encontrado.")
+        val activeRows = rows.filter { it.archivedAt == null }
+
+        check(row.archivedAt != null || activeRows.count { it.id != id } >= 1) {
+            "Você precisa manter pelo menos um workspace ativo."
+        }
+
+        val fallback = activeRows.firstOrNull { it.id != id }
+        dao.upsertWorkspaces(
+            listOf(row.copy(archivedAt = java.time.Instant.now().toString()))
+        )
+
+        if (session.workspaceScope.value?.workspaceId == id && fallback != null) {
+            session.activateWorkspace(WorkspaceScope(userId, fallback.id))
         }
     }
 
-    suspend fun restoreWorkspace(id: String) = manageWorkspaces {
-        cacheWorkspace(api.restoreWorkspace(id))
+    suspend fun restoreWorkspace(id: String) {
+        val userId = session.localUserId() ?: 0
+        val row =
+            dao.workspacesForUser(userId)
+                .firstOrNull { it.id == id }
+                ?: error("Workspace não encontrado.")
+        dao.upsertWorkspaces(listOf(row.copy(archivedAt = null)))
     }
 
     suspend fun createManualAccount(name: String, agency: String? = null, accountNumber: String? = null) = withWorkspace {
@@ -1390,6 +1435,7 @@ class FinanceRepository @Inject constructor(
                                     payload.accountId,
                                 categoryId =
                                     payload.categoryId,
+                                purchaseDate = payload.purchaseDate,
                                 date =
                                     payload.date,
                                 description =
@@ -2378,6 +2424,10 @@ class FinanceRepository @Inject constructor(
                 amount = amount,
                 transactionType =
                     type,
+                // A fatura das compras sem parcelas depende de purchaseDate.
+                // Ao editar a data, mova a compra para o ciclo correto.
+                purchaseDate = if (current.cardId != null && current.source != "card_payment" &&
+                    (current.installmentTotal ?: 1) <= 1) date else current.purchaseDate,
                 date = date,
                 syncState =
                     if (transactionId > 0) {
@@ -2414,7 +2464,8 @@ class FinanceRepository @Inject constructor(
                             transactionType =
                                 updated.transactionType,
                             status =
-                                updated.status
+                                updated.status,
+                            purchaseDate = updated.purchaseDate
                         )
                     )
             )
@@ -2977,12 +3028,17 @@ class FinanceRepository @Inject constructor(
         val backup = Gson().fromJson(raw, FinanceBackupV3::class.java)
         require(backup.workspaces.isNotEmpty()) { "O backup não contém workspaces" }
         val backupIds = backup.workspaces.map { it.workspace.id }.toSet()
+        val singleWorkspaceBackup = root.get("scope")?.asString == "workspace"
+        require(!singleWorkspaceBackup || backupIds.size == 1) {
+            "Backup de Workspace invalido: esperado exatamente um Workspace."
+        }
         val existingWorkspaces = dao.workspacesForUser(currentScope.userId)
         val debtPrefs = context.getSharedPreferences("financeapp_debts", Context.MODE_PRIVATE)
 
         if (normalizedMode == "replace") {
             database.withTransaction {
                 existingWorkspaces.forEach { ws ->
+                    if (singleWorkspaceBackup && ws.id !in backupIds) return@forEach
                     dao.clearPendingOperations(currentScope.userId, ws.id)
                     dao.clearTransactions(currentScope.userId, ws.id)
                     dao.clearAccountsForRestore(currentScope.userId, ws.id)
@@ -2991,12 +3047,14 @@ class FinanceRepository @Inject constructor(
                     dao.clearGoals(currentScope.userId, ws.id)
                     dao.clearBudgets(currentScope.userId, ws.id)
                     dao.clearGoalContributions(currentScope.userId, ws.id)
-                    if (ws.id !in backupIds) dao.deleteWorkspace(currentScope.userId, ws.id)
+                    if (!singleWorkspaceBackup && ws.id !in backupIds) dao.deleteWorkspace(currentScope.userId, ws.id)
                 }
                 dao.upsertWorkspaces(backup.workspaces.map { it.workspace.copy(userId = currentScope.userId, archivedAt = null) })
             }
             val clean = debtPrefs.edit()
-            debtPrefs.all.keys.filter { key -> existingWorkspaces.any { key.endsWith("_${it.id}") } }.forEach { clean.remove(it) }
+            debtPrefs.all.keys.filter { key -> existingWorkspaces.any { ws ->
+                (!singleWorkspaceBackup || ws.id in backupIds) && key.endsWith("_${ws.id}")
+            } }.forEach { clean.remove(it) }
             clean.apply()
         } else {
             dao.upsertWorkspaces(backup.workspaces.map { it.workspace.copy(userId = currentScope.userId, archivedAt = null) })
@@ -3059,7 +3117,7 @@ class FinanceRepository @Inject constructor(
             restored += wsBackup.transactions.size + wsBackup.accounts.size + wsBackup.categories.size + wsBackup.cards.size + wsBackup.goals.size + wsBackup.budgets.size + wsBackup.contributions.size
         }
 
-        if (currentScope.workspaceId !in backupIds) {
+        if (!singleWorkspaceBackup && currentScope.workspaceId !in backupIds) {
             val preferred = backup.workspaces.firstOrNull { it.workspace.isDefault } ?: backup.workspaces.first()
             session.activateWorkspace(WorkspaceScope(currentScope.userId, preferred.workspace.id))
         }

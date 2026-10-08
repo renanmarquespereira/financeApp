@@ -21,7 +21,7 @@ bool _isPayableLinkedTransaction(FinancialTransaction t)=>t.externalTransactionI
 class FinanceApp extends StatefulWidget{const FinanceApp({super.key});@override State<FinanceApp> createState()=>_FinanceAppState();}
 class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
   Timer? _forecastTimer;
-  bool get _mobileLocalOnly => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  bool get _mobileLocalOnly => !kIsWeb;
   bool _forecastRunning=false;
   @override void dispose(){_forecastTimer?.cancel();WidgetsBinding.instance.removeObserver(this);super.dispose();}
   @override void didChangeAppLifecycleState(AppLifecycleState state){
@@ -61,7 +61,27 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
     _bootstrap();
   }
 
-  Future<void> _bootstrap() async{final prefs=await SharedPreferences.getInstance();onboardingDone=prefs.getBool('financeapp_onboarding_v1_done')??false;final mode=await store.themeMode();themeMode=mode=='dark'?ThemeMode.dark:mode=='light'?ThemeMode.light:ThemeMode.system;guest=await store.guestMode();tokens=await store.readTokens();serverOk=await api.health();if(guest){workspace=guestWorkspace;workspaces=[guestWorkspace];await _loadLocal();}else if(tokens!=null){try{if(_mobileLocalOnly){await _loadMobileLocalWorkspace();await _loadLocal();await GoogleDriveBackupService.runScheduledIfDue();}else{await _loadWorkspaces();await _loadLocal();if(serverOk)await _sync();}}catch(_){if(workspace==null){await store.clear();tokens=null;}}}if(mounted)setState(()=>loading=false);}
+  Future<void> _bootstrap() async {
+    final prefs=await SharedPreferences.getInstance();
+    onboardingDone=prefs.getBool('financeapp_onboarding_v1_done')??false;
+    final mode=await store.themeMode();
+    themeMode=mode=='dark'?ThemeMode.dark:mode=='light'?ThemeMode.light:ThemeMode.system;
+    if(_mobileLocalOnly){
+      guest=true;
+      tokens=null;
+      serverOk=false;
+      await _loadMobileLocalWorkspace();
+      await _loadLocal();
+      await GoogleDriveBackupService.runScheduledIfDue();
+    }else{
+      guest=await store.guestMode();
+      tokens=await store.readTokens();
+      serverOk=await api.health();
+      if(guest){workspace=guestWorkspace;workspaces=[guestWorkspace];await _loadLocal();}
+      else if(tokens!=null){try{await _loadWorkspaces();await _loadLocal();if(serverOk)await _sync();}catch(_){if(workspace==null){await store.clear();tokens=null;}}}
+    }
+    if(mounted)setState(()=>loading=false);
+  }
   Future<void> _login(String email,String password) async=>_authenticate(()=>api.login(email,password));
   Future<void> _loadMobileLocalWorkspace() async {
     final prefs=await SharedPreferences.getInstance();
@@ -536,10 +556,10 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
     if(mounted)setState((){});
   }
   void _theme(ThemeMode value){store.saveThemeMode(value.name);setState(()=>themeMode=value);}
-  Future<void> _logout() async{await store.clear();setState((){tokens=null;guest=false;workspace=null;workspaces=[];snapshot=FinancialSnapshot.empty();});}
+  Future<void> _logout() async{if(_mobileLocalOnly)return;await store.clear();setState((){tokens=null;guest=false;workspace=null;workspaces=[];snapshot=FinancialSnapshot.empty();});}
   Future<void> _finishOnboarding() async{final prefs=await SharedPreferences.getInstance();await prefs.setBool('financeapp_onboarding_v1_done',true);if(mounted)setState((){onboardingDone=true;showOnboarding=false;});}
   void _showOnboarding(){if(mounted)setState(()=>showOnboarding=true);}
 
-  @override Widget build(BuildContext context)=>MaterialApp(debugShowCheckedModeBanner:false,title:'FinanceApp',themeMode:themeMode,theme:financeTheme(Brightness.light),darkTheme:financeTheme(Brightness.dark),home:loading?const Scaffold(body:Center(child:CircularProgressIndicator())):(!onboardingDone||showOnboarding)?OnboardingScreen(onFinish:_finishOnboarding):(tokens==null&&!guest)?LoginScreen(onLogin:_login,onRegister:_register,onForgot:_forgot,onReset:_reset,onGoogle:_google,onGuest:_guest,busy:busy,error:error):HomeScreen(workspace:workspace!,workspaces:workspaces,onWorkspace:_select,onCreateWorkspace:_createWorkspace,onReloadWorkspaces:_reloadWorkspaces,onLogout:_logout,onTheme:_theme,themeMode:themeMode,serverOk:guest?false:serverOk,snapshot:snapshot,syncing:syncing,onSync:_sync,isGuest:guest,onSaveTransaction:_upsertTransaction,onImportTransactions:_importTransactions,onDeleteTransaction:_deleteTransaction,onSaveAccount:_upsertAccount,onDeleteAccount:_deleteAccount,onSaveCard:_upsertCard,onDeleteCard:_deleteCard,onSaveCategory:_upsertCategory,onDeleteCategory:_deleteCategory,onSaveSnapshot:_saveSnapshot,api:api,accessToken:tokens?.accessToken,onRefreshFinance:_sync,onShowOnboarding:_showOnboarding));
+  @override Widget build(BuildContext context)=>MaterialApp(debugShowCheckedModeBanner:false,title:'FinanceApp',themeMode:themeMode,theme:financeTheme(Brightness.light),darkTheme:financeTheme(Brightness.dark),home:loading?const Scaffold(body:Center(child:CircularProgressIndicator())):(!onboardingDone||showOnboarding)?OnboardingScreen(onFinish:_finishOnboarding):(!_mobileLocalOnly&&tokens==null&&!guest)?LoginScreen(onLogin:_login,onRegister:_register,onForgot:_forgot,onReset:_reset,onGoogle:_google,onGuest:_guest,busy:busy,error:error):HomeScreen(workspace:workspace!,workspaces:workspaces,onWorkspace:_select,onCreateWorkspace:_createWorkspace,onReloadWorkspaces:_reloadWorkspaces,onLogout:_logout,onTheme:_theme,themeMode:themeMode,serverOk:guest?false:serverOk,snapshot:snapshot,syncing:syncing,onSync:_sync,isGuest:guest,onSaveTransaction:_upsertTransaction,onImportTransactions:_importTransactions,onDeleteTransaction:_deleteTransaction,onSaveAccount:_upsertAccount,onDeleteAccount:_deleteAccount,onSaveCard:_upsertCard,onDeleteCard:_deleteCard,onSaveCategory:_upsertCategory,onDeleteCategory:_deleteCategory,onSaveSnapshot:_saveSnapshot,api:api,accessToken:tokens?.accessToken,onRefreshFinance:_sync,onShowOnboarding:_showOnboarding));
 }
 extension FirstOrNull<T> on Iterable<T>{T? get firstOrNull=>isEmpty?null:first;}

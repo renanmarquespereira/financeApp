@@ -1,4 +1,4 @@
-﻿# ==============================
+# ==============================
 # FinanceApp - arquivos privados
 # ==============================
 
@@ -70,3 +70,5 @@ Thumbs.db
 _backup_patch_*/
 
 android/.kotlin/
+
+keystore.properties

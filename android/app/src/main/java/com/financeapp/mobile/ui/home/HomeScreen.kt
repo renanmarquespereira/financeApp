@@ -421,6 +421,11 @@ fun HomeScreen(
         mutableStateOf(false)
     }
     var showSettings by remember { mutableStateOf(false) }
+    // FINANCEAPP_DELETE_V1: dedicated, email-authorized local deletion.
+    var showDataDeletion by remember { mutableStateOf(false) }
+    var dataDeletionChoice by remember {
+        mutableStateOf<com.financeapp.mobile.data.deletion.DeletionChoice?>(null)
+    }
     var showBackupSyncDialog by remember { mutableStateOf(false) }
     var showAttentionCenter by remember { mutableStateOf(false) }
     var attentionOldestFirstRequest by remember { mutableIntStateOf(0) }
@@ -671,7 +676,7 @@ fun HomeScreen(
                                         contentScale = ContentScale.Crop
                                     )
                                 } else {
-                                    Icon(Icons.Default.Person, contentDescription = "Perfil", tint = Color.White)
+                                    Icon(Icons.Default.Settings, contentDescription = "Configurações", tint = Color.White)
                                 }
                             }
                         }
@@ -687,7 +692,7 @@ fun HomeScreen(
                     title = {
                         Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             Surface(
-                                onClick = { if (guest) showSettings = true else onManageWorkspaces() },
+                                onClick = onManageWorkspaces,
                                 shape = MaterialTheme.shapes.large,
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
@@ -710,7 +715,7 @@ fun HomeScreen(
                         }
                     },
                     actions = {
-                        if (guest) Text("Só neste aparelho", style=MaterialTheme.typography.labelSmall)
+                        if (guest) Text("", style=MaterialTheme.typography.labelSmall)
                         else {
                             BadgedBox(
                                 badge = { if (attentionTotal > 0) Badge { Text(if (attentionTotal > 99) "99+" else attentionTotal.toString()) } }
@@ -729,7 +734,7 @@ fun HomeScreen(
                                     }
                                 }
                                 if (photoBitmap != null) Image(photoBitmap.asImageBitmap(), "Perfil", Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape), contentScale=ContentScale.Crop)
-                                else Icon(Icons.Default.Person, contentDescription="Perfil", tint=MaterialTheme.colorScheme.primary)
+                                else Icon(Icons.Default.Settings, contentDescription="Configurações", tint=MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
@@ -897,8 +902,16 @@ fun HomeScreen(
                     onDelete = {
                         pendingDelete = it
                     },
-                    onDeleteBulk =
-                        onDeleteTransactionsBulk,
+                    onDeleteBulk = { selected ->
+                        val ids = selected.flatMap { tx ->
+                            if (tx.installmentGroup != null && (tx.installmentTotal ?: 1) > 1)
+                                transactions.filter { it.installmentGroup == tx.installmentGroup && it.cardId == tx.cardId }
+                            else listOf(tx)
+                        }.map { it.id }.toSet()
+                        dataDeletionChoice = com.financeapp.mobile.data.deletion.DeletionChoice(
+                            workspaceIds = setOf(workspaceId), transactions = true, transactionMode = "selected", transactionIds = ids)
+                        showDataDeletion = true
+                    },
                     onUpdateCategoryBulk =
                         onUpdateTransactionsCategoryBulk,
                     onUpdateAccountBulk =
@@ -945,7 +958,10 @@ fun HomeScreen(
                     cards = cards.filter { it.active },
                     onCreateCard = onCreateCard,
                     onPayCardInvoice = onPayCardInvoice,
-                    onDeleteCard = onDeleteCard,
+                    onDeleteCard = { cardId ->
+                        dataDeletionChoice = com.financeapp.mobile.data.deletion.DeletionChoice(workspaceIds = setOf(workspaceId), cardIds = setOf(cardId))
+                        showDataDeletion = true
+                    },
                     onUpdateCardDetails =
                         onUpdateCardDetails,
                     onUpdateAccountDetails =
@@ -962,7 +978,8 @@ fun HomeScreen(
                     onDelete = {
                         pendingAccountDelete = it
                     },
-                    onOpenInvoices = { selectedTab = HomeTab.INVOICES }
+                    onOpenInvoices = { selectedTab = HomeTab.INVOICES },
+                    onEditCardTransaction = { tx -> editingTransaction = tx }
                 )
             }
 
@@ -1258,7 +1275,7 @@ fun HomeScreen(
         val duplicates = pendingImportRows.count { row -> transactions.any { tx -> tx.description.equals(row.description, true) && kotlin.math.abs(tx.amount - row.amount) < 0.005 && tx.date.take(10) == row.date } }
         AlertDialog(
             onDismissRequest = { pendingImportRows = emptyList() },
-            title = { Text("Importar dados financeiros") },
+            title = { Text("Importar dados (JSON / CSV / Excel)") },
             text = {
                 val mappingText = if (pendingImportMapping.isEmpty())
                     "Nenhum cabeçalho conhecido foi identificado automaticamente."
@@ -1328,9 +1345,35 @@ fun HomeScreen(
         )
     }
 
+    if (showDataDeletion) {
+        DataDeletionDialog(
+            onDismiss = { showDataDeletion = false; dataDeletionChoice = null },
+            initialChoice = dataDeletionChoice,
+            userKey = state.userEmail ?: "local"
+        )
+    }
+
     if (showSettings && guest) {
-        GuestOptionsDialog(guestFrozen,onDismiss={showSettings=false},onRegister=onGuestRegister,onLogin=onGuestLogin,
-            onCreateAccount=onCreateGuestAccount,onLogout=onLogout)
+        GuestOptionsDialog(
+            frozen = false,
+            onDismiss = { showSettings = false },
+            onRegister = { },
+            onLogin = { },
+            onCreateAccount = onCreateGuestAccount,
+            onLogout = { },
+            onBackup = { showSettings = false; showBackupSyncDialog = true },
+            onManageData = {
+                showSettings = false
+                dataDeletionChoice = null
+                showDataDeletion = true
+            },
+            onAppSettings = { showSettings = false; showAppCustomization = true },
+            onDiagnostics = { showSettings = false; showDiagnostics = true },
+            onNotifications = { showSettings = false; showNotificationSettings = true },
+            onLegalPrivacy = { showSettings = false; showLegalPrivacy = true },
+            appLockEnabled = appLockEnabled,
+            onAppLockChange = onAppLockChange
+        )
     }
     if (showSettings && !guest) {
         AccountSettingsDialog(
@@ -1344,7 +1387,7 @@ fun HomeScreen(
             onLegalPrivacy = { showSettings = false; showLegalPrivacy = true },
             onShowOnboarding = { showSettings = false; onShowOnboarding() },
             onNotifications = { showSettings = false; showNotificationSettings = true },
-            onCreateBackup = { createBackupLauncher.launch("FinanceApp_backup_${java.time.LocalDate.now()}.json") },
+            onCreateBackup = { showSettings = false; showBackupSyncDialog = true },
             onRestoreBackup = { restoreBackupLauncher.launch(arrayOf("application/json","text/plain")) },
             onImportData = { importDataLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","text/csv","application/json","text/plain","application/xml","text/xml")) },
             onChoosePhoto = { showPhotoSource = true },
@@ -1356,7 +1399,8 @@ fun HomeScreen(
             onAppLockChange = onAppLockChange,
             onDeleteAllData = {
                 showSettings = false
-                showDeleteAllDataWarning = true
+                dataDeletionChoice = null
+                showDataDeletion = true
             },
             onDismiss = { showSettings = false },
             onLogout = { showSettings = false; onLogout() }
@@ -1367,7 +1411,10 @@ fun HomeScreen(
         BackupSyncDialog(
             onDismiss = { showBackupSyncDialog = false },
             onExportBackup = onExportBackup,
-            onRestoreBackup = onRestoreBackup
+            onRestoreBackup = onRestoreBackup,
+            currentWorkspaceId = workspaceId,
+            currentWorkspaceName = workspaceName,
+            workspaces = workspaces,
         )
     }
 
@@ -1502,7 +1549,7 @@ fun HomeScreen(
                     option("Limites / Orçamentos", o.budgets) { deleteDataOptions = o.copy(budgets = it) }
                     option("Metas financeiras", o.goals) { deleteDataOptions = o.copy(goals = it) }
                     option("Conexões Open Finance", o.openFinance) { deleteDataOptions = o.copy(openFinance = it) }
-                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
                     Text("Workspaces adicionais", fontWeight = FontWeight.SemiBold)
                     val removable = workspaces.filter { !it.isDefault }
                     if (removable.isEmpty()) {
@@ -1512,7 +1559,7 @@ fun HomeScreen(
                             deleteDataOptions = o.copy(workspaceIds = if (checked) (o.workspaceIds + ws.id).distinct() else o.workspaceIds - ws.id)
                         }
                     }
-                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
                     option("Apagar todos os dados financeiros", allFinancialSelected) { checked ->
                         deleteDataOptions = if (checked) {
                             o.copy(
@@ -1694,11 +1741,9 @@ fun HomeScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (guest) { onDeleteGuestAccount(account.id); pendingAccountDelete=null }
-                        else onRequestAccountDeleteCode(account.id) {
-                            pendingAccountDelete = null
-                            accountDeleteCodeFor = account
-                        }
+                        dataDeletionChoice = com.financeapp.mobile.data.deletion.DeletionChoice(workspaceIds = setOf(workspaceId), accountIds = setOf(account.id))
+                        pendingAccountDelete = null
+                        showDataDeletion = true
                     },
                     enabled = !state.loading,
                     colors = ButtonDefaults.buttonColors(
@@ -1879,7 +1924,11 @@ fun HomeScreen(
             onDismiss = { showPlanning = false; planningBudgetCategoryId = null },
             onCreateCategory = { name, icon -> onCreateCategory(name, icon) {} },
             onUpdateCategory = onUpdateCategory,
-            onDeleteCategory = onDeleteCategory,
+            onDeleteCategory = { categoryId ->
+                showPlanning = false
+                dataDeletionChoice = com.financeapp.mobile.data.deletion.DeletionChoice(workspaceIds = setOf(workspaceId), categoryIds = setOf(categoryId))
+                showDataDeletion = true
+            },
             onSetBudget = onSetBudget,
             onDeleteBudget = onDeleteBudget,
             onCreateGoal = onCreateGoal,
@@ -2536,12 +2585,6 @@ private fun DiagnosticsDialog(
             backupStatus.lastBackupAt + backupStatus.intervalDays * 86_400_000L
         ).atZone(ZoneId.systemDefault()).format(formatter)
     }
-    val serverLabel = when (serverAvailable) {
-        true -> "Conectado — serviços online disponíveis"
-        false -> "Indisponível ou offline"
-        null -> "Ainda não verificado"
-    }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.HealthAndSafety, null) },
@@ -2555,15 +2598,6 @@ private fun DiagnosticsDialog(
                 Text(workspaceName.ifBlank { "Workspace" }, fontWeight = FontWeight.SemiBold)
                 HorizontalDivider()
                 DiagnosticLine("Banco local", "OK — dados financeiros disponíveis neste aparelho", DiagnosticStatus.SUCCESS)
-                DiagnosticLine(
-                    "Servidor",
-                    serverLabel,
-                    when (serverAvailable) {
-                        true -> DiagnosticStatus.SUCCESS
-                        false -> DiagnosticStatus.ERROR
-                        null -> DiagnosticStatus.ATTENTION
-                    }
-                )
                 HorizontalDivider()
                 Text("Backup", style = MaterialTheme.typography.labelLarge)
                 DiagnosticLine(
@@ -2584,7 +2618,7 @@ private fun DiagnosticsDialog(
                 OutlinedButton(onClick = onOpenBackup, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.CloudUpload, null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Abrir Backup e sincronização")
+                    Text("Abrir Backup e restauração")
                 }
             }
         },
@@ -2700,9 +2734,9 @@ private fun AccountSettingsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Person, null) },
+        icon = { Icon(Icons.Default.Settings, null) },
         title = {
-            Text("Conta")
+            Text("Configurações")
         },
         text = {
             Column(
@@ -2722,7 +2756,7 @@ private fun AccountSettingsDialog(
                 }
                 HorizontalDivider()
 
-                Text("Backup e sincronização", style = MaterialTheme.typography.labelLarge)
+                Text("Backup e restauração", style = MaterialTheme.typography.labelLarge)
                 Text(
                     "Seus dados financeiros ficam neste aparelho. Não existe mais sincronização automática com o servidor. O Google Drive é usado somente para backup.",
                     style = MaterialTheme.typography.bodySmall
@@ -2733,11 +2767,22 @@ private fun AccountSettingsDialog(
                 ) {
                     Icon(Icons.Default.CloudUpload, null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Backup e sincronização")
+                    Text("Backup e restauração")
                 }
-                OutlinedButton(onClick=onImportData, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.UploadFile,null); Spacer(Modifier.width(6.dp)); Text("Importar dados financeiros") }
-                Text("XLSX, CSV, JSON, TXT e XML", style=MaterialTheme.typography.bodySmall)
+                Button(onClick=onImportData, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.UploadFile,null); Spacer(Modifier.width(6.dp)); Text("IMPORTAR JSON / CSV / EXCEL") }
+                Text("Selecione um arquivo, confira a previa e confirme a importacao no Workspace atual. Formatos: JSON, XLSX, CSV, TXT e XML.", style=MaterialTheme.typography.bodySmall)
+                HorizontalDivider()
 
+                OutlinedButton(
+                    onClick = onDeleteAllData,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Default.DeleteForever, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Gerenciar e excluir dados")
+                }
+                Text("Escolha os registros e confirme por código enviado ao e-mail.", style = MaterialTheme.typography.bodySmall)
                 HorizontalDivider()
 
                 Text("Configurações do aplicativo", style = MaterialTheme.typography.labelLarge)
@@ -2747,7 +2792,6 @@ private fun AccountSettingsDialog(
                 OutlinedButton(onClick=onLegalPrivacy, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Gavel,null); Spacer(Modifier.width(6.dp)); Text("Legal e privacidade") }
                 OutlinedButton(onClick=onShowOnboarding, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Slideshow,null); Spacer(Modifier.width(6.dp)); Text("Ver apresentação novamente") }
                 OutlinedButton(onClick=onNotifications, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.NotificationsActive,null); Spacer(Modifier.width(6.dp)); Text("Notificações") }
-
                 HorizontalDivider()
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -2757,7 +2801,6 @@ private fun AccountSettingsDialog(
                     }
                     Switch(checked = appLockEnabled, onCheckedChange = onAppLockChange)
                 }
-
                 HorizontalDivider()
 
                 Text(
@@ -2766,7 +2809,7 @@ private fun AccountSettingsDialog(
                         MaterialTheme.typography.labelLarge
                 )
                 Text(
-                    "Apague permanentemente bancos, transações, categorias, metas, limites, conexões e o backup dos seus dados financeiros.",
+                    "Selecione quais dados deseja excluir. A exclusão exige confirmação por código enviado ao e-mail.",
                     style =
                         MaterialTheme.typography.bodySmall
                 )
@@ -2785,7 +2828,7 @@ private fun AccountSettingsDialog(
                         contentDescription = null
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Apagar todos os meus dados")
+                    Text("Gerenciar e excluir dados")
                 }
             }
         },
@@ -4940,8 +4983,7 @@ private fun MonthlySummaryDialog(
                                         }
                                     }
                                 }
-
-                                HorizontalDivider()
+                HorizontalDivider()
 
                                 Text(
                                     "Saldo: ${currency.format(balance)}",
@@ -5198,7 +5240,6 @@ private fun CategoryManagerDialog(
                     Spacer(Modifier.width(6.dp))
                     Text("Nova categoria")
                 }
-
                 HorizontalDivider()
 
                 if (categories.isEmpty()) {

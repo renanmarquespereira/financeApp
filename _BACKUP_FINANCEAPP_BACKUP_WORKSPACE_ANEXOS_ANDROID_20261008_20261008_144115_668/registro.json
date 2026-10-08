@@ -1,0 +1,11 @@
+{
+    "patch":  "FINANCEAPP_BACKUP_WORKSPACE_ANEXOS_ANDROID_20261008",
+    "project":  "D:\\RENAN_APP\\FinanceApp_Consolidado",
+    "date":  "2026-10-08T14:41:15.9539035-03:00",
+    "files":  [
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/TransactionAttachmentsDialog.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/BackupSyncDialog.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/ui/home/HomeScreen.kt",
+                  "android/app/src/main/java/com/financeapp/mobile/data/repository/FinanceRepository.kt"
+              ]
+}

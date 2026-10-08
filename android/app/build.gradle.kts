@@ -1,3 +1,11 @@
+import java.util.Properties
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
 val configuredApiBaseUrl = ((findProperty("API_BASE_URL") as String?)
     ?: System.getenv("API_BASE_URL")
     ?: "http://10.0.2.2:8000/").let { if (it.endsWith("/")) it else "$it/" }
@@ -26,6 +34,16 @@ android {
         buildConfigField("String", "API_BASE_URL", "\"$escapedApiBaseUrl\"")
     }
 
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -36,6 +54,7 @@ android {
             isMinifyEnabled = false
         }
         release {
+            if (keystorePropertiesFile.exists()) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

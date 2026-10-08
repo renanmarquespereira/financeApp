@@ -30,27 +30,55 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
 
-private fun closingForMonth(month: YearMonth, closingDay: Int?): LocalDate {
-    val close = (closingDay ?: 31).coerceIn(1, 31)
-    return month.atDay(close.coerceAtMost(month.lengthOfMonth()))
-}
-
-private fun invoiceEndForDate(date: LocalDate, closingDay: Int?): LocalDate {
-    val thisClose = closingForMonth(YearMonth.from(date), closingDay)
-    return if (!date.isAfter(thisClose)) thisClose else closingForMonth(YearMonth.from(date).plusMonths(1), closingDay)
-}
+private fun invoiceEndForDate(date: LocalDate, closingDay: Int?): LocalDate =
+    cardBillingClosingForPurchase(date, closingDay)
 
 private fun invoiceStartForEnd(end: LocalDate, closingDay: Int?): LocalDate =
-    closingForMonth(YearMonth.from(end).minusMonths(1), closingDay).plusDays(1)
+    cardBillingClosing(YearMonth.from(end).minusMonths(1), closingDay).plusDays(1)
 
-private fun centralDueDate(end: LocalDate, dueDay: Int?): LocalDate? {
-    val due = dueDay ?: return null
-    var month = YearMonth.from(end)
-    if (due <= end.dayOfMonth) month = month.plusMonths(1)
-    return month.atDay(due.coerceAtMost(month.lengthOfMonth()))
+// A competencia da fatura e o mes do VENCIMENTO, nunca simplesmente o mes da compra.
+// As datas das parcelas ja sao individuais em tx.date; purchaseDate pode ser a data
+// original da compra e nao deve agrupar todas as parcelas na mesma fatura.
+internal fun cardBillingTransactionDate(tx: TransactionEntity): LocalDate? =
+    runCatching { LocalDate.parse(tx.date.take(10)) }.getOrNull()
+        ?: tx.purchaseDate?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+
+internal fun cardBillingClosing(month: YearMonth, closingDay: Int?): LocalDate {
+    val day = (closingDay ?: 25).coerceIn(1, 31)
+    return month.atDay(day.coerceAtMost(month.lengthOfMonth()))
 }
 
-private fun txLocalDate(tx: TransactionEntity) = runCatching { LocalDate.parse(tx.date.take(10)) }.getOrNull()
+internal fun cardBillingClosingForPurchase(date: LocalDate, closingDay: Int?): LocalDate {
+    val end = cardBillingClosing(YearMonth.from(date), closingDay)
+    return if (date.isAfter(end)) cardBillingClosing(YearMonth.from(date).plusMonths(1), closingDay) else end
+}
+
+internal fun cardBillingDue(closingDate: LocalDate, closingDay: Int?, dueDay: Int?): LocalDate? {
+    val due = dueDay?.coerceIn(1, 31) ?: return null
+    val close = (closingDay ?: 25).coerceIn(1, 31)
+    val dueMonth = YearMonth.from(closingDate).let { if (due <= close) it.plusMonths(1) else it }
+    return dueMonth.atDay(due.coerceAtMost(dueMonth.lengthOfMonth()))
+}
+
+internal fun cardBillingWindow(invoiceMonth: YearMonth, closingDay: Int?, dueDay: Int?): Pair<LocalDate, LocalDate> {
+    val close = (closingDay ?: 25).coerceIn(1, 31)
+    val due = dueDay?.coerceIn(1, 31)
+    val closingMonth = if (due != null && due <= close) invoiceMonth.minusMonths(1) else invoiceMonth
+    val end = cardBillingClosing(closingMonth, closingDay)
+    val priorEnd = cardBillingClosing(closingMonth.minusMonths(1), closingDay)
+    return priorEnd.plusDays(1) to end
+}
+
+internal fun cardBillingMonth(tx: TransactionEntity, card: CreditCardDto): YearMonth? {
+    val transactionDate = cardBillingTransactionDate(tx) ?: return null
+    val end = cardBillingClosingForPurchase(transactionDate, card.closingDay)
+    return YearMonth.from(cardBillingDue(end, card.closingDay, card.dueDay) ?: end)
+}
+
+internal fun cardBillingMatches(tx: TransactionEntity, card: CreditCardDto, invoiceMonth: YearMonth): Boolean =
+    tx.cardId == card.id && tx.source != "card_payment" && cardBillingMonth(tx, card) == invoiceMonth
+
+private fun txLocalDate(tx: TransactionEntity): LocalDate? = cardBillingTransactionDate(tx)
 
 private enum class InvoiceStatus(val label: String) {
     OVERDUE("Vencida"),
@@ -105,7 +133,7 @@ private fun buildInvoiceSummaries(
             }
             val paid = payments.sumOf { abs(it.amount) }
             val remaining = (total - paid).coerceAtLeast(0.0)
-            val due = centralDueDate(invoiceEnd, card.dueDay)
+            val due = cardBillingDue(invoiceEnd, card.closingDay, card.dueDay)
             result += InvoiceSummary(
                 card = card,
                 invoiceEnd = invoiceEnd,
@@ -179,6 +207,14 @@ private fun bankCardContentColor(name: String): Color {
     return if ("bancodobrasil" in n || n == "bb" || "001" in n) Color(0xFF12335B) else Color.White
 }
 
+// Detecta a linha Black pelo nome do banco, apelido ou bandeira/variante
+// do cartao. Nao altera a cor dos demais cartoes.
+private fun isBlackInvoiceCard(card: CreditCardDto): Boolean {
+    val blackWord = Regex("(?i)\\bblack\\b")
+    return listOfNotNull(card.bankName, card.nickname, card.brand)
+        .any { blackWord.containsMatchIn(it) }
+}
+
 private data class MonthInvoice(
     val end: LocalDate,
     val due: LocalDate?,
@@ -191,19 +227,15 @@ private data class MonthInvoice(
 )
 
 private fun monthInvoice(card: CreditCardDto, month: YearMonth, transactions: List<TransactionEntity>): MonthInvoice {
-    val end = closingForMonth(month, card.closingDay)
-    val start = invoiceStartForEnd(end, card.closingDay)
-    val purchases = transactions.filter { tx ->
-        tx.cardId == card.id && tx.source != "card_payment" &&
-            txLocalDate(tx)?.let { !it.isBefore(start) && !it.isAfter(end) } == true
-    }
+    val (_, end) = cardBillingWindow(month, card.closingDay, card.dueDay)
+    val purchases = transactions.filter { tx -> cardBillingMatches(tx, card, month) }
     val total = (-purchases.sumOf { it.amount }).coerceAtLeast(0.0)
     val payments = transactions.filter {
         it.cardId == card.id && it.source == "card_payment" && it.purchaseDate?.take(10) == end.toString()
     }
     val paid = payments.sumOf { abs(it.amount) }
     val remaining = (total - paid).coerceAtLeast(0.0)
-    val due = centralDueDate(end, card.dueDay)
+    val due = cardBillingDue(end, card.closingDay, card.dueDay)
     val status = if (total <= 0.005) null else invoiceStatus(remaining, due, LocalDate.now())
     return MonthInvoice(end, due, purchases, payments, total, paid, remaining, status)
 }
@@ -249,8 +281,9 @@ fun InvoiceCenterScreen(
                 activeCards.forEach { card ->
                     val selected = selectedCardId == card.id
                     val cardInvoice = monthInvoice(card, month, transactions)
-                    val bg = bankCardColor(card.bankName)
-                    val fg = bankCardContentColor(card.bankName)
+                    val black = isBlackInvoiceCard(card)
+                    val bg = if (black) Color(0xFF101010) else bankCardColor(card.bankName)
+                    val fg = if (black) Color.White else bankCardContentColor(card.bankName)
                     Card(
                         modifier = Modifier.width(250.dp).height(145.dp).clickable { selectedCardId = card.id },
                         shape = RoundedCornerShape(20.dp),
@@ -366,12 +399,8 @@ private fun RegisterInvoicePaymentDialog(
     onDismiss: () -> Unit,
     onRegister: (Int, Int, String, Double, String, (Boolean) -> Unit) -> Unit,
 ) {
-    val start = invoiceStartForEnd(invoiceEnd, card.closingDay)
-    val purchases = transactions.filter { tx ->
-        tx.cardId == card.id &&
-            tx.source != "card_payment" &&
-            txLocalDate(tx)?.let { !it.isBefore(start) && !it.isAfter(invoiceEnd) } == true
-    }
+    val invoiceMonth = YearMonth.from(cardBillingDue(invoiceEnd, card.closingDay, card.dueDay) ?: invoiceEnd)
+    val purchases = transactions.filter { tx -> cardBillingMatches(tx, card, invoiceMonth) }
     val payments = transactions.filter {
         it.cardId == card.id && it.source == "card_payment" && it.purchaseDate?.take(10) == invoiceEnd.toString()
     }
