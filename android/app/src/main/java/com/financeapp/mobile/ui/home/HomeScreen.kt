@@ -98,7 +98,7 @@ import com.financeapp.mobile.util.normalizeCpf
 import com.financeapp.mobile.ui.legal.LegalPrivacyDialog
 import kotlinx.coroutines.launch
 
-private enum class HomeTab { DASHBOARD, TRANSACTIONS, FORECAST, ACCOUNTS, INVOICES }
+private enum class HomeTab { DASHBOARD, TRANSACTIONS, LENT_MONEY, FORECAST, ACCOUNTS, INVOICES }
 internal enum class SourceFilter(val label: String) { ALL("Todas"), OPEN_FINANCE("Automáticas"), MANUAL("Manuais") }
 internal enum class TypeFilter(val label: String) { ALL("Todos"), CREDIT("Entradas"), DEBIT("Saídas") }
 internal enum class AmountFilter(val label: String) { ALL("Todos"), UP_TO_100("Até R$ 100"), FROM_100_TO_500("R$ 100–500"), FROM_500_TO_1000("R$ 500–1.000"), ABOVE_1000("Acima de R$ 1.000") }
@@ -109,7 +109,7 @@ internal enum class DateSortOrder { NEWEST_FIRST, OLDEST_FIRST }
 internal enum class TransactionViewTab(
     val label: String
 ) {
-    EXPENSE("Despesas"),
+    EXPENSE("Transações"),
     CARD("Cartões")
 }
 
@@ -239,6 +239,9 @@ fun HomeScreen(
     onDeleteTransaction: (TransactionEntity) -> Unit,
     onDeleteTransactionsBulk:
         (List<TransactionEntity>) -> Unit,
+    onDeleteLoanMovements: (String, List<TransactionEntity>, (Boolean) -> Unit) -> Unit,
+    onUpdateLoanReceipt: (String, TransactionEntity, Int, Long, String, (Boolean) -> Unit) -> Unit,
+    onDeleteLoanReceipt: (String, TransactionEntity, (Boolean) -> Unit) -> Unit,
     onUpdateTransactionsCategoryBulk:
         (List<TransactionEntity>, Int?) -> Unit,
     onUpdateTransactionsAccountBulk:
@@ -545,8 +548,48 @@ fun HomeScreen(
         }
     }
 
-    val attentionUncategorizedCount = remember(transactions) {
-        transactions.count { it.categoryId == null && it.source != "card_payment" }
+    // Lembretes de dados incompletos: ignorar um aviso nao modifica a transacao.
+    // As chaves sao isoladas por usuario e por Workspace. Novos lancamentos
+    // recebem chaves novas e voltam a aparecer normalmente.
+    val missingAttentionPrefs = remember(appContext) {
+        appContext.getSharedPreferences("financeapp_missing_data_attention", Context.MODE_PRIVATE)
+    }
+    val missingAttentionKey = remember(workspaceId, state.userEmail) {
+        "ignored_${state.userEmail ?: "local"}_$workspaceId"
+    }
+    var ignoredMissingIssues by remember(missingAttentionKey) {
+        mutableStateOf(missingAttentionPrefs.getStringSet(missingAttentionKey, emptySet())?.toSet().orEmpty())
+    }
+    val uncategorizedTransactions = remember(transactions, ignoredMissingIssues) {
+        transactions.filter { tx ->
+            !isPendingPayable(tx) && !isPlannedDebtTransaction(tx) &&
+                tx.source != "card_payment" && tx.categoryId == null &&
+                "category:${tx.id}" !in ignoredMissingIssues
+        }
+    }
+    val unlinkedTransactions = remember(transactions, accounts, cards, ignoredMissingIssues) {
+        transactions.filter { tx ->
+            !isPendingPayable(tx) && !isPlannedDebtTransaction(tx) &&
+                tx.source != "card_payment" &&
+                (tx.accountId == null || accounts.none { it.id == tx.accountId }) &&
+                (tx.cardId == null || cards.none { it.id == tx.cardId }) &&
+                "bank:${tx.id}" !in ignoredMissingIssues
+        }
+    }
+    val attentionUncategorizedCount = uncategorizedTransactions.size
+    val attentionUnlinkedCount = unlinkedTransactions.size
+    fun dismissMissingDataWarnings() {
+        val dismissed = uncategorizedTransactions.map { "category:${it.id}" } +
+            unlinkedTransactions.map { "bank:${it.id}" }
+        if (dismissed.isNotEmpty()) {
+            val updated = ignoredMissingIssues + dismissed
+            ignoredMissingIssues = updated
+            missingAttentionPrefs.edit().putStringSet(missingAttentionKey, updated).apply()
+        }
+    }
+    fun restoreMissingDataWarnings() {
+        ignoredMissingIssues = emptySet()
+        missingAttentionPrefs.edit().remove(missingAttentionKey).apply()
     }
     val attentionDuplicateCount = remember(transactions) {
         val candidates = transactions.filter { !isPendingPayable(it) && it.source != "card_purchase" && it.source != "card_payment" }
@@ -610,8 +653,8 @@ fun HomeScreen(
         }
         count
     }
-    val attentionTotal = attentionUncategorizedCount + attentionDuplicateCount +
-        attentionCardsMissingDue + attentionUpcomingDue
+    val attentionTotal = attentionUncategorizedCount + attentionUnlinkedCount +
+        attentionDuplicateCount + attentionCardsMissingDue + attentionUpcomingDue
 
     Scaffold(
         topBar = {
@@ -637,7 +680,7 @@ fun HomeScreen(
                         }
                     },
                     actions = {
-                        if (!guest) {
+                        run {
                             BadgedBox(
                                 badge = {
                                     if (attentionTotal > 0) {
@@ -715,8 +758,7 @@ fun HomeScreen(
                         }
                     },
                     actions = {
-                        if (guest) Text("", style=MaterialTheme.typography.labelSmall)
-                        else {
+                        run {
                             BadgedBox(
                                 badge = { if (attentionTotal > 0) Badge { Text(if (attentionTotal > 99) "99+" else attentionTotal.toString()) } }
                             ) {
@@ -769,7 +811,7 @@ fun HomeScreen(
                 ) {
                     customization.navOrder.filter { it == "TRANSACTIONS" || it !in customization.hiddenNav }.forEach { id ->
                         val tab = runCatching { HomeTab.valueOf(id) }.getOrNull() ?: return@forEach
-                        val label = when(tab){ HomeTab.DASHBOARD->"Início"; HomeTab.TRANSACTIONS->"Transações"; HomeTab.FORECAST->"Previsão"; HomeTab.ACCOUNTS->"Bancos"; HomeTab.INVOICES->"Faturas" }
+                        val label = when(tab){ HomeTab.DASHBOARD->"Início"; HomeTab.TRANSACTIONS->"Transações"; HomeTab.LENT_MONEY->"Emprestado"; HomeTab.FORECAST->"Previsão"; HomeTab.ACCOUNTS->"Bancos"; HomeTab.INVOICES->"Faturas" }
                         NavigationBarItem(
                             selected = selectedTab == tab,
                             onClick = { selectedTab = tab },
@@ -782,7 +824,7 @@ fun HomeScreen(
                             ),
                             icon = {
                                 Icon(
-                                    when(tab){HomeTab.DASHBOARD->Icons.Default.Home;HomeTab.TRANSACTIONS->Icons.Default.ReceiptLong;HomeTab.FORECAST->Icons.Default.ShowChart;HomeTab.ACCOUNTS->Icons.Default.AccountBalance;HomeTab.INVOICES->Icons.Default.CreditCard},
+                                    when(tab){HomeTab.DASHBOARD->Icons.Default.Home;HomeTab.TRANSACTIONS->Icons.Default.ReceiptLong;HomeTab.LENT_MONEY->Icons.Default.Payments;HomeTab.FORECAST->Icons.Default.ShowChart;HomeTab.ACCOUNTS->Icons.Default.AccountBalance;HomeTab.INVOICES->Icons.Default.CreditCard},
                                     null,
                                     modifier = Modifier.size(navIconSize)
                                 )
@@ -849,7 +891,8 @@ fun HomeScreen(
                     },
                     onOpenSummary = {
                         showMonthlySummary = true
-                    }
+                    },
+                    // Os avisos agora ficam no sininho, ao lado da engrenagem.
                 )
                 HomeTab.TRANSACTIONS -> MonthlyTransactionsScreen(
                     accounts = accounts,
@@ -924,6 +967,17 @@ fun HomeScreen(
                             tx
                         )
                     }
+                )
+                HomeTab.LENT_MONEY -> LoansReceivableScreen(
+                    userKey = state.userEmail ?: "local",
+                    workspaceId = workspaceId,
+                    accounts = accounts,
+                    transactions = transactions,
+                    onCreateManualAccount = onCreateManualAccount,
+                    onCreateManual = onCreateManual,
+                    onDeleteLoanMovements = onDeleteLoanMovements,
+                    onUpdateLoanReceipt = onUpdateLoanReceipt,
+                    onDeleteLoanReceipt = onDeleteLoanReceipt
                 )
                 HomeTab.FORECAST -> FinancialForecastScreen(
                     accounts = accounts,
@@ -1195,9 +1249,22 @@ fun HomeScreen(
         )
     }
 
-    if (showAttentionCenter && !guest) {
+    if (showAttentionCenter) {
         AttentionCenterDialog(
             uncategorizedCount = attentionUncategorizedCount,
+            unlinkedCount = attentionUnlinkedCount,
+            ignoredMissingCount = ignoredMissingIssues.size,
+            uncategorizedTransactions = uncategorizedTransactions,
+            unlinkedTransactions = unlinkedTransactions,
+            onEditIncompleteTransaction = { tx ->
+                showAttentionCenter = false
+                editingTransaction = tx
+            },
+            onLinkBankTransaction = { tx ->
+                showAttentionCenter = false
+                if (accounts.isEmpty()) selectedTab = HomeTab.ACCOUNTS
+                else editingTransaction = tx
+            },
             duplicateCount = attentionDuplicateCount,
             cardsMissingDue = attentionCardsMissingDue,
             upcomingDueCount = attentionUpcomingDue,
@@ -1208,12 +1275,21 @@ fun HomeScreen(
                 attentionOldestFirstRequest++
                 selectedTab = HomeTab.TRANSACTIONS
             },
+            onOpenUnlinked = {
+                showAttentionCenter = false
+                filters = TransactionFilters(showAllTransactions = true)
+                searchQuery = "sem banco"
+                attentionOldestFirstRequest++
+                selectedTab = HomeTab.TRANSACTIONS
+            },
             onOpenDuplicates = {
                 showAttentionCenter = false
                 filters = TransactionFilters(showAllTransactions = true)
                 searchQuery = ""
                 selectedTab = HomeTab.TRANSACTIONS
             },
+            onDismissMissing = { dismissMissingDataWarnings() },
+            onRestoreMissing = { restoreMissingDataWarnings() },
             onOpenCards = { showAttentionCenter = false; selectedTab = HomeTab.ACCOUNTS },
             onOpenInvoices = { showAttentionCenter = false; selectedTab = HomeTab.INVOICES },
             onDismiss = { showAttentionCenter = false }
@@ -2949,14 +3025,14 @@ internal fun transactionMatchesSearch(
         else -> tx.source
     }
 
-    val accountText = if (account != null) {
-        listOfNotNull(
+    val accountText = when {
+        account != null -> listOfNotNull(
             account.institutionName,
             account.accountName,
             account.maskedAccount
         ).joinToString(" ")
-    } else {
-        "sem conta vinculada sem banco"
+        card != null -> "cartão vinculado"
+        else -> "sem conta vinculada sem banco"
     }
 
     val amountAbs = kotlin.math.abs(tx.amount)
@@ -3005,20 +3081,29 @@ internal fun transactionMatchesSearch(
 @Composable
 private fun AttentionCenterDialog(
     uncategorizedCount: Int,
+    unlinkedCount: Int,
+    ignoredMissingCount: Int,
+    uncategorizedTransactions: List<TransactionEntity>,
+    unlinkedTransactions: List<TransactionEntity>,
+    onEditIncompleteTransaction: (TransactionEntity) -> Unit,
+    onLinkBankTransaction: (TransactionEntity) -> Unit,
     duplicateCount: Int,
     cardsMissingDue: Int,
     upcomingDueCount: Int,
     onOpenUncategorized: () -> Unit,
+    onOpenUnlinked: () -> Unit,
     onOpenDuplicates: () -> Unit,
+    onDismissMissing: () -> Unit,
+    onRestoreMissing: () -> Unit,
     onOpenCards: () -> Unit,
     onOpenInvoices: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val total = uncategorizedCount + duplicateCount + cardsMissingDue + upcomingDueCount
+    val total = uncategorizedCount + unlinkedCount + duplicateCount + cardsMissingDue + upcomingDueCount
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(if (total > 0) Icons.Default.NotificationsActive else Icons.Default.CheckCircle, null) },
-        title = { Text("Central de pendências") },
+        title = { Text("Avisos e pendências") },
         text = {
             Column(
                 Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
@@ -3029,10 +3114,41 @@ private fun AttentionCenterDialog(
                     Text("Quando algo precisar da sua atenção, aparecerá aqui.", style = MaterialTheme.typography.bodySmall)
                 } else {
                     Text("$total item(ns) pedem sua atenção.", fontWeight = FontWeight.SemiBold)
-                    if (uncategorizedCount > 0) AttentionItem(Icons.Default.Category, "$uncategorizedCount transação(ões) sem categoria", "Ir para a mais antiga", onOpenUncategorized)
+                    if (uncategorizedCount > 0) {
+                        Text("Sem categoria ($uncategorizedCount)", fontWeight = FontWeight.SemiBold)
+                        uncategorizedTransactions.take(8).forEach { tx ->
+                            AttentionItem(Icons.Default.Category,
+                                tx.description.take(55).ifBlank { "Transação sem descrição" },
+                                "Tocar para categorizar", { onEditIncompleteTransaction(tx) })
+                        }
+                        if (uncategorizedCount > 8) AttentionItem(Icons.Default.List,
+                            "Mais ${uncategorizedCount - 8} transações sem categoria", "Ver todas", onOpenUncategorized)
+                    }
+                    if (unlinkedCount > 0) {
+                        Text("Sem banco ou cartão ($unlinkedCount)", fontWeight = FontWeight.SemiBold)
+                        unlinkedTransactions.take(8).forEach { tx ->
+                            AttentionItem(Icons.Default.AccountBalance,
+                                tx.description.take(55).ifBlank { "Transação sem descrição" },
+                                "Tocar para vincular banco", { onLinkBankTransaction(tx) })
+                        }
+                        if (unlinkedCount > 8) AttentionItem(Icons.Default.List,
+                            "Mais ${unlinkedCount - 8} transações sem banco", "Ver todas", onOpenUnlinked)
+                    }
                     if (duplicateCount > 0) AttentionItem(Icons.Default.ContentCopy, "$duplicateCount possível(is) duplicidade(s)", "Comparar e conciliar", onOpenDuplicates)
                     if (cardsMissingDue > 0) AttentionItem(Icons.Default.CreditCard, "$cardsMissingDue cartão(ões) sem dia de vencimento", "Completar cadastro", onOpenCards)
                     if (upcomingDueCount > 0) AttentionItem(Icons.Default.Event, "$upcomingDueCount fatura(s) com valor em aberto e vencimento nos próximos 7 dias", "Ver faturas", onOpenInvoices)
+                    if (uncategorizedCount > 0 || unlinkedCount > 0) {
+                        TextButton(onClick = onDismissMissing) {
+                            Icon(Icons.Default.ClearAll, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Limpar avisos de dados incompletos")
+                        }
+                    }
+                }
+                if (ignoredMissingCount > 0) {
+                    TextButton(onClick = onRestoreMissing) {
+                        Text("Reexibir avisos dispensados ($ignoredMissingCount)")
+                    }
                 }
             }
         },
@@ -3042,14 +3158,17 @@ private fun AttentionCenterDialog(
 
 @Composable
 private fun AttentionItem(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, action: String, onClick: () -> Unit) {
-    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, Modifier.size(22.dp))
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                TextButton(onClick = onClick, contentPadding = PaddingValues(0.dp)) { Text(action) }
+                Text(action, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary)
             }
+            Icon(Icons.Default.ChevronRight, contentDescription = null)
         }
     }
 }
@@ -3148,6 +3267,7 @@ private fun DashboardScreen(
         if (accountsWithBalance.isEmpty()) {
             transactions
                 .filter(::isCashFlowTransaction)
+                .filter { tx -> parseTxDate(tx.date)?.let { !it.isAfter(LocalDate.now()) } == true }
                 .sumOf { it.amount }
         } else {
             val bankBalance =
@@ -3165,6 +3285,7 @@ private fun DashboardScreen(
                     // Saldo consolidado segue apenas o fluxo real de caixa:
                     // compra no cartao nao reduz a conta; pagamento da fatura reduz.
                     .filter(::isCashFlowTransaction)
+                    .filter { tx -> parseTxDate(tx.date)?.let { !it.isAfter(LocalDate.now()) } == true }
                     .filter { tx ->
                         val account =
                             accounts.firstOrNull {
@@ -3203,19 +3324,21 @@ private fun DashboardScreen(
         }
     }
 
-    val periodIncome = remember(periodTransactions) {
-        periodTransactions
-            .filter { it.amount > 0.0 && isCashFlowTransaction(it) }
-            .sumOf { it.amount }
-    }
-
     val periodExpense = remember(periodTransactions) {
         periodTransactions
             .filter { it.amount < 0.0 && isCashFlowTransaction(it) }
             .sumOf { abs(it.amount) }
     }
 
-    val periodBalance = periodIncome - periodExpense
+    // Entradas totais ja recebidas, independentemente do seletor Mensal/Anual.
+    // Recebimentos futuros (por exemplo, recorrencias) nao sao dinheiro disponivel hoje.
+    val accumulatedIncome = remember(transactions) {
+        val today = LocalDate.now()
+        transactions.asSequence()
+            .filter { it.amount > 0.0 && isCashFlowTransaction(it) }
+            .filter { tx -> parseTxDate(tx.date)?.let { !it.isAfter(today) } == true }
+            .sumOf { it.amount }
+    }
 
     val previousExpense = remember(previousTransactions) {
         previousTransactions
@@ -3410,14 +3533,14 @@ private fun DashboardScreen(
                             ) {
                                 if ("INCOME" in visibleMetricIds) {
                                     DashboardMetricCard(
-                                        Modifier.weight(1f), "Entradas", if (dashboardValuesVisible) currency.format(periodIncome) else "R$ ••••••",
+                                        Modifier.weight(1f), "Entradas totais", if (dashboardValuesVisible) currency.format(accumulatedIncome) else "R$ ••••••",
                                         Icons.Default.ArrowDownward, Color(0xFF178A3A),
                                         Color(0xFFE9F8EF)
                                     )
                                 }
                                 if ("EXPENSES" in visibleMetricIds) {
                                     DashboardMetricCard(
-                                        Modifier.weight(1f), "Saídas", if (dashboardValuesVisible) currency.format(periodExpense) else "R$ ••••••",
+                                        Modifier.weight(1f), if (dashboardAnnual) "Saídas do ano" else "Saídas do mês", if (dashboardValuesVisible) currency.format(periodExpense) else "R$ ••••••",
                                         Icons.Default.ArrowUpward, MaterialTheme.colorScheme.error,
                                         Color(0xFFFFEFF1)
                                     )

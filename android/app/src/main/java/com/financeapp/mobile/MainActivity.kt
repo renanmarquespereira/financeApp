@@ -288,6 +288,9 @@ class MainActivity : FragmentActivity() {
                         },
                         onDeleteTransactionsBulk =
                             homeViewModel::deleteTransactionsBulk,
+                        onDeleteLoanMovements = homeViewModel::deleteLoanMovements,
+                        onUpdateLoanReceipt = homeViewModel::updateLoanReceipt,
+                        onDeleteLoanReceipt = homeViewModel::deleteLoanReceipt,
                         onUpdateTransactionsCategoryBulk =
                             homeViewModel::updateTransactionsCategoryBulk,
                         onUpdateTransactionsAccountBulk =

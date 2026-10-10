@@ -3,6 +3,7 @@ package com.financeapp.mobile.ui.home
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import com.financeapp.mobile.data.local.WorkspaceEntity
 import com.google.gson.JsonArray
 import com.google.gson.JsonParser
@@ -206,8 +207,12 @@ fun BackupSyncDialog(
                     prefs.edit().putLong(KEY_LAST, lastBackupAt).apply()
                     message = if (manualScopeId == null) "Backup de todos os Workspaces salvo no Google Drive."
                               else "Backup do Workspace selecionado salvo no Google Drive."
+                    Toast.makeText(context, "Backup realizado com sucesso!", Toast.LENGTH_LONG).show()
                 }
-                    .onFailure { message = it.message ?: "Não foi possível fazer o backup." }
+                    .onFailure {
+                        message = it.message ?: "Não foi possível fazer o backup."
+                        Toast.makeText(context, message ?: "Falha ao salvar backup", Toast.LENGTH_LONG).show()
+                    }
                 busy = false
             }
         }

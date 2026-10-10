@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 data class AppCustomization(
-    val navOrder: List<String> = listOf("DASHBOARD","TRANSACTIONS","FORECAST","ACCOUNTS"),
+    val navOrder: List<String> = listOf("DASHBOARD","TRANSACTIONS","LENT_MONEY","FORECAST","ACCOUNTS"),
     val hiddenNav: Set<String> = emptySet(),
     val dashboardOrder: List<String> = listOf("CURRENT_VALUE","INCOME","EXPENSES","INVOICES","BUDGETS","BIGGEST_SPEND","GOALS","LATEST","QUICK_ACTIONS"),
     val hiddenDashboard: Set<String> = emptySet(),
@@ -24,7 +24,12 @@ fun loadCustomization(context: Context, userKey: String): AppCustomization {
     fun list(k:String, def:List<String>)=p.getString(prefix+k,null)?.split(',')?.filter{it.isNotBlank()} ?: def
     val defaults = AppCustomization()
     val storedNavOrder = list("nav_order", defaults.navOrder)
-    val normalizedNavOrder = (storedNavOrder + defaults.navOrder).distinct().filterNot { it == "INTELLIGENCE" }
+    // Mesmo para usuários que já salvaram uma ordem antiga, inserir ao lado de Transações.
+    val navWithLoan = (storedNavOrder + defaults.navOrder).distinct().filterNot { it == "INTELLIGENCE" }
+    val normalizedNavOrder = navWithLoan.filterNot { it == "LENT_MONEY" }.toMutableList().apply {
+        val index = indexOf("TRANSACTIONS")
+        add(if (index < 0) size else index + 1, "LENT_MONEY")
+    }
     return AppCustomization(
         navOrder=normalizedNavOrder,
         hiddenNav=list("nav_hidden", emptyList()).toSet() - setOf("TRANSACTIONS"),
@@ -48,7 +53,7 @@ fun saveCustomization(context: Context, userKey:String, c:AppCustomization){
 @Composable
 fun AppCustomizationDialog(value:AppCustomization,onThemeChange:(String)->Unit,onSave:(AppCustomization)->Unit,onDismiss:()->Unit){
     var c by remember(value){ mutableStateOf(value) }
-    val navLabels=mapOf("DASHBOARD" to "Dashboard","FORECAST" to "Previsão / Planejamento","ACCOUNTS" to "Bancos / Cartões")
+    val navLabels=mapOf("DASHBOARD" to "Dashboard","LENT_MONEY" to "Dinheiro emprestado","FORECAST" to "Previsão / Planejamento","ACCOUNTS" to "Bancos / Cartões")
     val dashLabels=mapOf("CURRENT_VALUE" to "Valor atual","INCOME" to "Entradas","EXPENSES" to "Saídas","INVOICES" to "Faturas de cartão","BUDGETS" to "Orçamentos","BIGGEST_SPEND" to "Maior gasto do mês","GOALS" to "Metas financeiras","LATEST" to "Últimas transações","QUICK_ACTIONS" to "Ações rápidas")
     AlertDialog(onDismissRequest=onDismiss,title={Text("Configurações do aplicativo")},text={
         Column(Modifier.fillMaxWidth().heightIn(max=520.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){

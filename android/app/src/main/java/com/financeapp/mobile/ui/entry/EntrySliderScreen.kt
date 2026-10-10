@@ -99,8 +99,9 @@ fun EntrySliderScreen(onEnter: () -> Unit) {
             ) {
                 val density = LocalDensity.current
                 val thumb = 68.dp
-                val travelPx = with(density) { (maxWidth - thumb).toPx().coerceAtLeast(1f) }
-                val offsetPx = animated * travelPx
+                val horizontalInset = 4.dp
+                val travelPx = with(density) { (maxWidth - thumb - horizontalInset * 2).toPx().coerceAtLeast(1f) }
+                val offsetPx = with(density) { horizontalInset.toPx() } + animated * travelPx
 
                 Box(
                     Modifier
@@ -108,19 +109,21 @@ fun EntrySliderScreen(onEnter: () -> Unit) {
                         .clip(RoundedCornerShape(38.dp))
                         .background(Color.White.copy(alpha = 0.12f))
                 ) {
-                    Box(
-                        Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(animated.coerceAtLeast(0.01f))
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(
-                                        accent.copy(alpha = 0.55f),
-                                        Color(0xFF65B7FF).copy(alpha = 0.18f)
+                    if (animated > 0.001f) {
+                        Box(
+                            Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(animated.coerceIn(0f, 1f))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(
+                                            accent.copy(alpha = 0.55f),
+                                            Color(0xFF65B7FF).copy(alpha = 0.18f)
+                                        )
                                     )
                                 )
-                            )
-                    )
+                        )
+                    }
 
                     Text(
                         "Deslize para entrar",
@@ -153,7 +156,7 @@ fun EntrySliderScreen(onEnter: () -> Unit) {
                             },
                         shape = CircleShape,
                         color = accent,
-                        shadowElevation = 8.dp
+                        shadowElevation = 0.dp
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(

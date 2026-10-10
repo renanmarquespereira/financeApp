@@ -1172,6 +1172,100 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun deleteLoanMovements(
+        loanId: String,
+        transactions: List<TransactionEntity>,
+        onComplete: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch(screenContext) {
+            try {
+                require(loanId.isNotBlank() && transactions.isNotEmpty()) {
+                    "Nao ha movimentacoes de emprestimo para excluir."
+                }
+                require(transactions.all { isLentMovementFor(loanId, it) }) {
+                    "A selecao contem transacoes que nao pertencem ao emprestimo."
+                }
+                require(transactions.none {
+                    it.installmentGroup != null && (it.installmentTotal ?: 1) > 1
+                }) {
+                    "Uma movimentacao passou a fazer parte de um parcelamento. " +
+                        "Remova o parcelamento antes de exclui-la junto com o emprestimo."
+                }
+                val selected = transactions.distinctBy { it.id }
+                val deleted = repository.deleteTransactionsBulk(selected)
+                check(deleted == selected.size) {
+                    "Nem todas as movimentacoes vinculadas foram excluidas. Confira o extrato."
+                }
+                _state.value = _state.value.copy(
+                    message = if (deleted == 1) "Movimentacao de emprestimo excluida."
+                        else "$deleted movimentacoes de emprestimo excluidas."
+                )
+                onComplete(true)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    error = e.message ?: "Nao foi possivel excluir as movimentacoes do emprestimo."
+                )
+                onComplete(false)
+            }
+        }
+    }
+
+    fun updateLoanReceipt(
+        loanId: String, transaction: TransactionEntity, accountId: Int,
+        amountCents: Long, paymentDate: String, onComplete: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch(screenContext) {
+            try {
+                val current = transactions.value.firstOrNull { it.id == transaction.id }
+                    ?: error("Recebimento nao encontrado no extrato.")
+                require(isLentReceiptFor(loanId, current)) {
+                    "Esse lancamento nao pertence ao emprestimo selecionado."
+                }
+                require(current.installmentGroup == null || (current.installmentTotal ?: 1) <= 1) {
+                    "Um recebimento parcelado nao pode ser alterado por esta tela."
+                }
+                require(amountCents > 0L && amountCents < Long.MAX_VALUE / 2L) { "Valor invalido." }
+                require(accounts.value.any { it.id == accountId }) { "Banco nao encontrado no Workspace." }
+                java.time.LocalDate.parse(paymentDate)
+                // Preserva a descricao e o identificador do emprestimo.
+                repository.updateManualTransaction(
+                    current.id, accountId, current.categoryId, current.description,
+                    amountCents.toDouble() / 100.0, "credit", paymentDate
+                )
+                _state.value = _state.value.copy(message = "Recebimento atualizado.")
+                onComplete(true)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message ?: "Falha ao editar recebimento.")
+                onComplete(false)
+            }
+        }
+    }
+
+    fun deleteLoanReceipt(
+        loanId: String, transaction: TransactionEntity, onComplete: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch(screenContext) {
+            try {
+                val current = transactions.value.firstOrNull { it.id == transaction.id }
+                    ?: error("Recebimento nao encontrado no extrato.")
+                require(isLentReceiptFor(loanId, current)) {
+                    "Esse lancamento nao pertence ao emprestimo selecionado."
+                }
+                require(current.installmentGroup == null || (current.installmentTotal ?: 1) <= 1) {
+                    "O recebimento esta vinculado a um grupo de parcelas."
+                }
+                check(repository.deleteTransaction(current) == 1) {
+                    "Nao foi possivel excluir somente esse recebimento."
+                }
+                _state.value = _state.value.copy(message = "Recebimento excluido do extrato.")
+                onComplete(true)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message ?: "Falha ao excluir recebimento.")
+                onComplete(false)
+            }
+        }
+    }
+
     fun updateTransactionsCategoryBulk(
         transactions: List<TransactionEntity>,
         categoryId: Int?
