@@ -557,6 +557,7 @@ internal fun ManualTransactionDialog(
         mutableStateOf(false)
     }
     var installmentCount by remember { mutableStateOf(1) }
+    var amountIsPerInstallment by remember { mutableStateOf(false) }
     var customInstallments by remember { mutableStateOf(false) }
     var customInstallmentText by remember { mutableStateOf("") }
     var recurringExpense by remember { mutableStateOf(false) }
@@ -568,10 +569,11 @@ internal fun ManualTransactionDialog(
         )
     }
 
-    val totalValue =
-        BrlMoney.toDouble(
-            amountDigits
-        )
+    val enteredValue = BrlMoney.toDouble(amountDigits)
+    val totalValue = if (selectedCardId != null && installmentCount > 1 && !recurringExpense && amountIsPerInstallment) {
+        val cents = kotlin.math.round(enteredValue * 100).toLong()
+        (cents * installmentCount).toDouble() / 100.0
+    } else enteredValue
 
     val selectedAccount = accounts.firstOrNull { it.id == selectedAccountId }
     val cardsFromSelectedBank = remember(cards, selectedAccountId, accounts) {
@@ -594,10 +596,7 @@ internal fun ManualTransactionDialog(
         if (canSave) {
             saving = true
 
-                    val raw =
-                        BrlMoney.toDouble(
-                            amountDigits
-                        )
+                    val raw = totalValue
 
                     val effectiveType =
                         if (
@@ -797,7 +796,7 @@ internal fun ManualTransactionDialog(
 
                             Text(
                                 card?.let {
-                                    "${it.bankName} • ${it.brand} •••• ${it.lastFour}"
+                                    "${it.bankName} — ${it.nickname?.trim()?.takeIf { name -> name.isNotEmpty() } ?: it.brand} •••• ${it.lastFour}"
                                 }
                                     ?: if (forceCardPurchase) {
                                         "Selecione o cartão"
@@ -838,7 +837,7 @@ internal fun ManualTransactionDialog(
                                 DropdownMenuItem(
                                     text = {
                                         Text(
-                                            "${card.bankName} • ${card.brand} •••• ${card.lastFour}"
+                                            "${card.bankName} — ${card.nickname?.trim()?.takeIf { name -> name.isNotEmpty() } ?: card.brand} •••• ${card.lastFour}"
                                         )
                                     },
                                     onClick = {
@@ -938,7 +937,7 @@ internal fun ManualTransactionDialog(
                     label = {
                         Text(
                             if (selectedCardId != null && installmentCount > 1) {
-                                "Valor total da compra"
+                                if (amountIsPerInstallment) "Valor de cada parcela" else "Valor total da compra"
                             } else {
                                 "Valor"
                             }
@@ -1021,6 +1020,22 @@ internal fun ManualTransactionDialog(
                     type == "debit" &&
                     !recurringExpense
                 ) {
+                    Text("Informar valor por", fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        FilterChip(
+                            selected = !amountIsPerInstallment,
+                            onClick = { if (amountIsPerInstallment) { amountIsPerInstallment = false; amountDigits = "" } },
+                            label = { Text("Compra total") }
+                        )
+                        FilterChip(
+                            selected = amountIsPerInstallment,
+                            onClick = { if (!amountIsPerInstallment) { amountIsPerInstallment = true; amountDigits = "" } },
+                            label = { Text("Cada parcela") }
+                        )
+                    }
+                    if (amountIsPerInstallment && enteredValue > 0.0) {
+                        Text("Total calculado: ${NumberFormat.getCurrencyInstance(Locale("pt", "BR")).format(totalValue)}", style = MaterialTheme.typography.bodySmall)
+                    }
                     Text(
                         if (installmentCount == 1) "Parcelas: à vista / 1x" else "Parcelas: ${installmentCount}x",
                         fontWeight = FontWeight.SemiBold

@@ -27,7 +27,8 @@ fun createAndShareFinancialSummaryPdf(
     cards: List<CreditCardDto>,
     periodTitle: String,
     annualMonths: List<Triple<Int, Double, Double>> = emptyList(),
-    openingBalance: Double = 0.0
+    openingBalance: Double = 0.0,
+    previousPeriodTransactions: List<TransactionEntity> = emptyList()
 ) {
     try {
         createAndShareFinancialSummaryPdfInternal(
@@ -37,7 +38,8 @@ fun createAndShareFinancialSummaryPdf(
             cards = cards,
             periodTitle = periodTitle,
             annualMonths = annualMonths,
-            openingBalance = openingBalance
+            openingBalance = openingBalance,
+            previousPeriodTransactions = previousPeriodTransactions
         )
     } catch (error: Exception) {
         Toast.makeText(
@@ -55,7 +57,8 @@ private fun createAndShareFinancialSummaryPdfInternal(
     cards: List<CreditCardDto>,
     periodTitle: String,
     annualMonths: List<Triple<Int, Double, Double>> = emptyList(),
-    openingBalance: Double = 0.0
+    openingBalance: Double = 0.0,
+    previousPeriodTransactions: List<TransactionEntity> = emptyList()
 ) {
     val locale = Locale("pt", "BR")
     val currency = NumberFormat.getCurrencyInstance(locale)
@@ -129,19 +132,21 @@ private fun createAndShareFinancialSummaryPdfInternal(
 
     val balance = openingBalance + income - expenses
 
-    val categoryExpenses = cashFlowTransactions
-        .filter { it.amount < 0 }
+    // Categorias representam as compras/despesas reais, inclusive compras no cartão.
+    // Pagamentos de fatura não são uma nova despesa por categoria.
+    val priorCategories = previousPeriodTransactions
+        .filter { it.amount < 0 && it.source != "card_payment" }
         .groupBy { it.categoryId }
-        .map { entry ->
-            val name = categories.firstOrNull {
-                it.id == entry.key
-            }?.name ?: "Sem categoria"
-
-            name to entry.value.sumOf {
-                abs(it.amount)
-            }
-        }
-        .sortedByDescending { it.second }
+        .mapValues { (_, items) -> items.sumOf { abs(it.amount) } }
+    val currentCategories = transactions
+        .filter { it.amount < 0 && it.source != "card_payment" }
+        .groupBy { it.categoryId }
+        .mapValues { (_, items) -> items.sumOf { abs(it.amount) } }
+    val comparisonCategories = (priorCategories.keys + currentCategories.keys).distinct()
+        .map { categoryId ->
+            val name = categories.firstOrNull { it.id == categoryId }?.name ?: "Sem categoria"
+            Triple(name, priorCategories[categoryId] ?: 0.0, currentCategories[categoryId] ?: 0.0)
+        }.sortedByDescending { kotlin.math.max(it.second, it.third) }
 
     val document = PdfDocument()
 
@@ -523,101 +528,72 @@ private fun createAndShareFinancialSummaryPdfInternal(
 
     y += 142f
 
-    sectionTitle("Gastos por categoria")
+    // Comparativo compacto de categorias: mesmo criterio de caixa para os dois periodos.
+    // O periodo anterior ja e fornecido pelo filtro Mensal/Anual da tela de resumo.
+    y += 6f
+    sectionTitle(if (annualReport) "Categorias: comparativo anual" else "Categorias: comparativo mensal")
 
-    if (categoryExpenses.isEmpty()) {
-        ensure(60f)
-        roundedCard(y, 50f)
+    val periodYear = Regex("\\b(?:19|20)\\d{2}\\b").find(periodTitle)?.value?.toIntOrNull()
+        ?: LocalDate.now().year
+    val monthIndex = monthNames.indexOfFirst { periodTitle.startsWith(it, ignoreCase = true) }
+    val currentMonth = if (monthIndex >= 0) monthIndex + 1 else LocalDate.now().monthValue
+    val previousMonth = if (currentMonth == 1) 12 else currentMonth - 1
+    val previousYear = if (currentMonth == 1) periodYear - 1 else periodYear
+    val monthShort = listOf("Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez")
+    val previousLabel = if (annualReport) "${periodYear - 1}" else "${monthShort[previousMonth - 1]}/$previousYear"
+    val currentLabel = if (annualReport) "$periodYear" else "${monthShort[currentMonth - 1]}/$periodYear"
 
-        canvas().drawText(
-            "Nenhuma saída registrada no período.",
-            margin + 14f,
-            y + 29f,
-            bodyPaint
-        )
+    // Uma linha por categoria, com duas barras horizontais compactas.
+    // Nao limita o numero de categorias: ensure() quebra a pagina automaticamente.
+    val chartLeft = margin + 169f
+    val chartWidth = 204f
+    val valueRight = margin + contentWidth - 12f
+    val labelWidth = 146f
+    val barTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = chartBackground }
+    val previousPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = red }
+    val currentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green }
+    val labelPaint = makePaint(8.6f, dark, true)
+    val periodPaint = makePaint(7.3f, muted)
+    val amountPaint = makePaint(8.2f, dark, true)
+    val highestValue = comparisonCategories.maxOfOrNull { max(it.second, it.third) }
+        ?.coerceAtLeast(1.0) ?: 1.0
+    val shortPrevious = previousLabel
+    val shortCurrent = currentLabel
 
-        y += 66f
+    if (comparisonCategories.isEmpty()) {
+        ensure(56f)
+        roundedCard(y, 48f)
+        canvas().drawText("Nenhuma despesa registrada nos dois períodos.", margin + 12f, y + 28f, bodyPaint)
+        y += 56f
     } else {
-        val topCategories = categoryExpenses.take(8)
-        val maxCategory = max(
-            topCategories.maxOfOrNull {
-                it.second
-            } ?: 0.0,
-            1.0
-        )
+        comparisonCategories.forEach { (categoryName, previous, current) ->
+            ensure(49f)
+            roundedCard(y, 44f)
+            val chart = canvas()
+            var displayName = categoryName
+            while (displayName.length > 3 && labelPaint.measureText(displayName) > labelWidth) {
+                displayName = displayName.dropLast(1)
+            }
+            if (displayName != categoryName) displayName += "…"
+            chart.drawText(displayName, margin + 10f, y + 15f, labelPaint)
 
-        topCategories.forEach { item ->
-            ensure(58f)
-
-            val top = y
-            val amount = item.second
-            val share =
-                if (expenses > 0.0) {
-                    amount / expenses * 100.0
-                } else {
-                    0.0
+            listOf(Triple(previous, previousPaint, shortPrevious),
+                Triple(current, currentPaint, shortCurrent)).forEachIndexed { index, (amount, fillPaint, label) ->
+                val rowY = y + 13f + index * 16f
+                chart.drawText(label, margin + 104f, rowY + 6f, periodPaint)
+                val track = RectF(chartLeft, rowY, chartLeft + chartWidth, rowY + 6f)
+                chart.drawRoundRect(track, 3f, 3f, barTrackPaint)
+                val fraction = (amount / highestValue).toFloat().coerceIn(0f, 1f)
+                val width = if (amount > 0.0) (chartWidth * fraction).coerceAtLeast(2f) else 0f
+                if (width > 0f) {
+                    chart.drawRoundRect(RectF(chartLeft, rowY, chartLeft + width, rowY + 6f),
+                        3f, 3f, fillPaint)
                 }
-
-            canvas().drawText(
-                item.first.take(34),
-                margin,
-                top + 13f,
-                bodyPaint
-            )
-
-            canvas().drawText(
-                currency.format(amount),
-                pageWidth - margin - 95f,
-                top + 13f,
-                makePaint(9.5f, dark, true)
-            )
-
-            val barTop = top + 25f
-
-            val bg = RectF(
-                margin,
-                barTop,
-                pageWidth - margin,
-                barTop + 10f
-            )
-
-            canvas().drawRoundRect(
-                bg,
-                5f,
-                5f,
-                Paint().apply {
-                    color = chartBackground
-                }
-            )
-
-            val ratio = (
-                amount / maxCategory
-                ).coerceIn(0.0, 1.0).toFloat()
-
-            val fg = RectF(
-                bg.left,
-                bg.top,
-                bg.left + bg.width() * ratio,
-                bg.bottom
-            )
-
-            canvas().drawRoundRect(
-                fg,
-                5f,
-                5f,
-                Paint().apply {
-                    color = primary
-                }
-            )
-
-            canvas().drawText(
-                "${String.format(locale, "%.1f", share)}% das saídas",
-                margin,
-                barTop + 27f,
-                smallPaint
-            )
-
-            y += 57f
+                val formatted = currency.format(amount)
+                chart.drawText(formatted, valueRight - amountPaint.measureText(formatted),
+                    rowY + 6f, amountPaint)
+            }
+            y += 48f
         }
     }
 

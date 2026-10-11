@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.financeapp.mobile.data.local.AccountEntity
 import com.financeapp.mobile.data.local.TransactionEntity
 import com.financeapp.mobile.data.remote.CreditCardDto
+import com.financeapp.mobile.data.remote.CategoryDto
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.NumberFormat
@@ -136,6 +137,7 @@ private fun saveDeletedScenarioIds(context: Context, userKey: String, workspaceN
 internal fun FinancialForecastScreen(
     accounts: List<AccountEntity>,
     transactions: List<TransactionEntity>,
+    categories: List<CategoryDto>,
     cards: List<CreditCardDto>,
     userKey: String,
     workspaceName: String,
@@ -313,6 +315,13 @@ internal fun FinancialForecastScreen(
                     Text("Uma visão simples do que já está previsto e dos cenários que você simular.", color = Color(0xFFE7EEFF))
                 }
             }
+        }
+        item {
+            FinancialAnalysisPanel(
+                transactions = transactions,
+                categories = categories,
+                forecastMonths = months.map { Triple(it.month, it.income, it.expenses) }
+            )
         }
         item { SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) { listOf(30,60,90).forEachIndexed { i, days -> SegmentedButton(horizon == days, { horizon = days }, SegmentedButtonDefaults.itemShape(i,3)) { Text("$days dias") } } } }
         item {

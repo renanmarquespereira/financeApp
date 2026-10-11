@@ -68,6 +68,7 @@ internal fun MonthlyTransactionsScreen(
     offlineSyncing: Boolean,
     transactions: List<TransactionEntity>,
     allTransactions: List<TransactionEntity>,
+    voiceReviewVersion: Int = 0,
     filters: TransactionFilters,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
@@ -183,8 +184,11 @@ internal fun MonthlyTransactionsScreen(
             emptySet()
     }
 
+    // Refresh the row badges after registering or reviewing a voice entry.
+    val voiceReviewRefresh = voiceReviewVersion
     val scopedTransactions = remember(
         transactions,
+        voiceReviewRefresh,
         transactionViewTab,
         quickCardId
     ) {
@@ -1654,7 +1658,7 @@ internal fun MonthlyTransactionsScreen(
                     FilterChip(
                         selected = quickCardId == card.id,
                         onClick = { quickCardId = card.id },
-                        label = { Text("${card.bankName} •••• ${card.lastFour}") },
+                        label = { Text("${card.bankName} — ${card.nickname?.trim()?.takeIf { name -> name.isNotEmpty() } ?: card.brand} •••• ${card.lastFour}") },
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = Color(0xFFF8FAFD),
                             selectedContainerColor = Color(0xFFE8F1FF),
@@ -2866,7 +2870,7 @@ private fun FilterDialog(
                                 cards.firstOrNull {
                                     it.id == cardId
                                 }?.let {
-                                    "${it.bankName} • ${it.brand} •••• ${it.lastFour}"
+                                    "${it.bankName} — ${it.nickname?.trim()?.takeIf { name -> name.isNotEmpty() } ?: it.brand} •••• ${it.lastFour}"
                                 } ?: "Todos os cartões"
                             )
                         }
@@ -2895,7 +2899,7 @@ private fun FilterDialog(
                                 DropdownMenuItem(
                                     text = {
                                         Text(
-                                            "${card.bankName} • ${card.brand} •••• ${card.lastFour}"
+                                            "${card.bankName} — ${card.nickname?.trim()?.takeIf { name -> name.isNotEmpty() } ?: card.brand} •••• ${card.lastFour}"
                                         )
                                     },
                                     onClick = {
@@ -3350,6 +3354,8 @@ private fun TransactionRow(
             Locale("pt", "BR")
         )
     }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val voicePending = VoiceReviewMarker.pending(context, tx)
     val statusUi = transactionStatusUi(tx)
     val displayAmount = statusUi?.displayAmount ?: tx.amount
     val displayDescription = statusUi?.description ?: tx.description
@@ -3444,11 +3450,12 @@ private fun TransactionRow(
             Column(
                 modifier = Modifier.weight(1f)
             ) {
-                Text(
-                    displayDescription,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(displayDescription, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
+                    if (voicePending) {
+                        Icon(Icons.Default.Mic, contentDescription = "Lançamento por voz: toque para revisar", modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

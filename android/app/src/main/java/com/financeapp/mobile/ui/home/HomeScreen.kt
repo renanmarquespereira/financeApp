@@ -338,7 +338,8 @@ fun HomeScreen(
         }
     }
     var selectedTab by remember { mutableStateOf(HomeTab.DASHBOARD) }
-    var voiceDraft by remember { mutableStateOf<VoiceTransactionDraft?>(null) }
+    var voiceReviewVersion by remember { mutableIntStateOf(0) }
+    var pendingVoiceNavigation by remember { mutableStateOf(false) }
     var voiceProcessing by remember { mutableStateOf(false) }
     var voiceError by remember { mutableStateOf<String?>(null) }
 
@@ -358,8 +359,38 @@ fun HomeScreen(
                 voiceProcessing = false
                 if (localDraft.amount <= 0.0) {
                     voiceError = "Entendi a frase, mas não consegui identificar o valor. Fale, por exemplo: ‘Gastei na padaria dois reais e cinquenta e dois centavos’."
+                } else if (localDraft.description.isBlank() || (localDraft.paymentMethod == "card" && localDraft.cardId == null)) {
+                    voiceError = "Não identifiquei todos os dados necessários. Tente falar a descrição e o cartão novamente."
                 } else {
-                    voiceDraft = localDraft
+                    val isCard = localDraft.paymentMethod == "card"
+                    val effectiveType = if (isCard && localDraft.cardRefund) "credit" else localDraft.type
+                    val amount = if (effectiveType == "debit") -kotlin.math.abs(localDraft.amount) else kotlin.math.abs(localDraft.amount)
+                    val date = VoiceTransactionParser.toIsoDateTime(localDraft.date)
+                    onCreateManual(
+                        if (isCard) null else localDraft.accountId,
+                        localDraft.categoryId,
+                        localDraft.description,
+                        amount,
+                        effectiveType,
+                        date,
+                        if (isCard) localDraft.cardId else null,
+                        if (isCard) localDraft.installmentCount.coerceIn(1, 360) else 1,
+                        if (isCard) date else null
+                    ) { success ->
+                        if (success) {
+                            VoiceReviewMarker.markCreated(
+                                appContext, workspaceId, localDraft.description, amount, date,
+                                if (isCard) null else localDraft.accountId, if (isCard) localDraft.cardId else null,
+                                if (isCard) localDraft.installmentCount.coerceIn(1, 360) else 1
+                            )
+                            voiceReviewVersion++
+                            pendingVoiceNavigation = true
+                            selectedTab = HomeTab.TRANSACTIONS
+                            android.widget.Toast.makeText(appContext, "Lançamento por voz registrado. Revise no ícone de microfone.", android.widget.Toast.LENGTH_LONG).show()
+                        } else {
+                            voiceError = "Não foi possível salvar o lançamento por voz. Tente novamente."
+                        }
+                    }
                 }
             }
         }
@@ -465,6 +496,12 @@ fun HomeScreen(
     var showDeleteAllDataCode by remember { mutableStateOf(false) }
     var deleteDataOptions by remember { mutableStateOf(UserDataDeleteOptionsRequest()) }
     var filters by remember { mutableStateOf(TransactionFilters()) }
+    LaunchedEffect(pendingVoiceNavigation) {
+        if (pendingVoiceNavigation) {
+            filters = TransactionFilters(showAllTransactions = true)
+            pendingVoiceNavigation = false
+        }
+    }
     var searchQuery by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<TransactionEntity?>(null) }
     var pendingAccountDelete by remember { mutableStateOf<AccountEntity?>(null) }
@@ -554,16 +591,19 @@ fun HomeScreen(
     val missingAttentionPrefs = remember(appContext) {
         appContext.getSharedPreferences("financeapp_missing_data_attention", Context.MODE_PRIVATE)
     }
+    // Versao v3: renova uma vez os avisos dispensados, pois a checagem
+    // antiga nao incluia categorias excluidas ou banco/cartao invalido.
     val missingAttentionKey = remember(workspaceId, state.userEmail) {
-        "ignored_${state.userEmail ?: "local"}_$workspaceId"
+        "ignored_v3_${state.userEmail ?: "local"}_$workspaceId"
     }
     var ignoredMissingIssues by remember(missingAttentionKey) {
         mutableStateOf(missingAttentionPrefs.getStringSet(missingAttentionKey, emptySet())?.toSet().orEmpty())
     }
-    val uncategorizedTransactions = remember(transactions, ignoredMissingIssues) {
+    val uncategorizedTransactions = remember(transactions, categories, ignoredMissingIssues) {
         transactions.filter { tx ->
             !isPendingPayable(tx) && !isPlannedDebtTransaction(tx) &&
-                tx.source != "card_payment" && tx.categoryId == null &&
+                tx.source != "card_payment" &&
+                (tx.categoryId == null || categories.none { it.id == tx.categoryId }) &&
                 "category:${tx.id}" !in ignoredMissingIssues
         }
     }
@@ -571,8 +611,8 @@ fun HomeScreen(
         transactions.filter { tx ->
             !isPendingPayable(tx) && !isPlannedDebtTransaction(tx) &&
                 tx.source != "card_payment" &&
-                (tx.accountId == null || accounts.none { it.id == tx.accountId }) &&
-                (tx.cardId == null || cards.none { it.id == tx.cardId }) &&
+                accounts.none { it.id == tx.accountId } &&
+                cards.none { it.id == tx.cardId } &&
                 "bank:${tx.id}" !in ignoredMissingIssues
         }
     }
@@ -905,6 +945,7 @@ fun HomeScreen(
                         state.offlineSyncing,
                     transactions = filteredTransactions,
                     allTransactions = transactions,
+                    voiceReviewVersion = voiceReviewVersion,
                     filters = filters,
                     searchQuery = searchQuery,
                     onSearchQueryChange = { searchQuery = it },
@@ -982,6 +1023,7 @@ fun HomeScreen(
                 HomeTab.FORECAST -> FinancialForecastScreen(
                     accounts = accounts,
                     transactions = transactions.filterNot(::isPendingPayable),
+                    categories = categories,
                     cards = cards,
                     userKey = state.userEmail ?: "local",
                     workspaceName = workspaceName,
@@ -1969,6 +2011,8 @@ fun HomeScreen(
                     type,
                     date
                 )
+                VoiceReviewMarker.reviewed(appContext, tx)
+                voiceReviewVersion++
                 editingTransaction = null
             }
         )
@@ -2056,39 +2100,6 @@ fun HomeScreen(
             title = { Text("Lançamento por voz") },
             text = { Text(message) },
             confirmButton = { TextButton(onClick = { voiceError = null }) { Text("Entendido") } }
-        )
-    }
-
-    voiceDraft?.let { draft ->
-        VoiceTransactionConfirmDialog(
-            initial = draft,
-            accounts = accounts,
-            categories = categories,
-            cards = cards.filter { it.active },
-            onDismiss = { voiceDraft = null },
-            onConfirm = { confirmed, done ->
-                val isCard = confirmed.paymentMethod == "card"
-                val effectiveType = if (isCard && confirmed.cardRefund) "credit" else confirmed.type
-                val signedAmount = if (effectiveType == "debit") -kotlin.math.abs(confirmed.amount) else kotlin.math.abs(confirmed.amount)
-                onCreateManual(
-                    if (isCard) null else confirmed.accountId,
-                    confirmed.categoryId,
-                    confirmed.description,
-                    signedAmount,
-                    effectiveType,
-                    VoiceTransactionParser.toIsoDateTime(confirmed.date),
-                    if (isCard) confirmed.cardId else null,
-                    if (isCard) confirmed.installmentCount.coerceIn(1, 360) else 1,
-                    if (isCard) VoiceTransactionParser.toIsoDateTime(confirmed.date) else null
-                ) { success ->
-                    done(success)
-                    if (success) {
-                        voiceDraft = null
-                        filters = TransactionFilters(showAllTransactions = true)
-                        selectedTab = HomeTab.TRANSACTIONS
-                    }
-                }
-            }
         )
     }
 
@@ -4966,7 +4977,8 @@ private fun MonthlySummaryDialog(
                                                 } else {
                                                     emptyList()
                                                 },
-                                            openingBalance = openingBalance
+                                            openingBalance = openingBalance,
+                                            previousPeriodTransactions = previousPeriodTransactions
                                         )
                                     },
                                     modifier =
