@@ -12,11 +12,21 @@ import androidx.compose.ui.unit.dp
 data class AppCustomization(
     val navOrder: List<String> = listOf("DASHBOARD","TRANSACTIONS","LENT_MONEY","FORECAST","ACCOUNTS"),
     val hiddenNav: Set<String> = emptySet(),
-    val dashboardOrder: List<String> = listOf("CURRENT_VALUE","INCOME","EXPENSES","INVOICES","BUDGETS","BIGGEST_SPEND","GOALS","LATEST","QUICK_ACTIONS"),
+    val dashboardOrder: List<String> = listOf("CURRENT_VALUE","INCOME","EXPENSES","QUICK_ACTIONS","INVOICES","BUDGETS","BIGGEST_SPEND","GOALS","LATEST"),
     val hiddenDashboard: Set<String> = emptySet(),
     val themeMode: String = "SYSTEM"
 )
 
+// Mantem Entradas, Saidas e Acoes rapidas sempre juntos logo apos o saldo,
+// inclusive para instalacoes que guardaram a ordem antiga nas preferencias.
+fun normalizeDashboardOrder(order: List<String>): List<String> {
+    val ids = order.distinct().toMutableList()
+    val fixed = listOf("INCOME", "EXPENSES", "QUICK_ACTIONS").filter { it in ids }
+    ids.removeAll(fixed.toSet())
+    val anchor = ids.indexOf("CURRENT_VALUE")
+    ids.addAll(if (anchor >= 0) anchor + 1 else 0, fixed)
+    return ids
+}
 private const val PREFS = "financeapp_ui_customization_v1"
 fun loadCustomization(context: Context, userKey: String): AppCustomization {
     val p=context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -33,7 +43,7 @@ fun loadCustomization(context: Context, userKey: String): AppCustomization {
     return AppCustomization(
         navOrder=normalizedNavOrder,
         hiddenNav=list("nav_hidden", emptyList()).toSet() - setOf("TRANSACTIONS"),
-        dashboardOrder=(list("dash_order", defaults.dashboardOrder) + defaults.dashboardOrder).distinct(),
+        dashboardOrder=normalizeDashboardOrder((list("dash_order", defaults.dashboardOrder) + defaults.dashboardOrder).distinct()),
         hiddenDashboard=list("dash_hidden", emptyList()).toSet().let { hidden ->
             if ("SUMMARY" in hidden) (hidden - "SUMMARY") + setOf("CURRENT_VALUE", "INCOME", "EXPENSES") else hidden - "SUMMARY"
         },
@@ -45,7 +55,7 @@ fun saveCustomization(context: Context, userKey:String, c:AppCustomization){
     context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
         .putString(prefix+"nav_order",c.navOrder.joinToString(","))
         .putString(prefix+"nav_hidden",(c.hiddenNav - setOf("TRANSACTIONS")).joinToString(","))
-        .putString(prefix+"dash_order",c.dashboardOrder.joinToString(","))
+        .putString(prefix+"dash_order",normalizeDashboardOrder(c.dashboardOrder).joinToString(","))
         .putString(prefix+"dash_hidden",c.hiddenDashboard.joinToString(","))
         .putString(prefix+"theme_mode",c.themeMode).apply()
 }

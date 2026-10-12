@@ -2885,7 +2885,16 @@ private fun AccountSettingsDialog(
                 verticalArrangement =
                     Arrangement.spacedBy(12.dp)
             ) {
-                Text("Perfil", style = MaterialTheme.typography.labelLarge)
+                Text("Aparência e privacidade", style = MaterialTheme.typography.labelLarge)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Exibir botão de visibilidade (olhinho)", style = MaterialTheme.typography.bodyMedium)
+                        Text("Se desativado, os valores ficam ocultos e o botão desaparece da tela Início.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = showEyeButton, onCheckedChange = onShowEyeButtonChange)
+                }
+                HorizontalDivider()
+                                Text("Perfil", style = MaterialTheme.typography.labelLarge)
                 Text(email ?: "E-mail não disponível", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = onEditPersonal, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Edit, null); Spacer(Modifier.width(6.dp)); Text("Editar dados")
@@ -2926,13 +2935,6 @@ private fun AccountSettingsDialog(
                 OutlinedButton(onClick=onAppSettings, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Tune,null); Spacer(Modifier.width(6.dp)); Text("Personalizar aplicativo") }
                 OutlinedButton(onClick=onDiagnostics, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.HealthAndSafety,null); Spacer(Modifier.width(6.dp)); Text("Diagnóstico e segurança dos dados") }
                 OutlinedButton(onClick=onLegalPrivacy, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Gavel,null); Spacer(Modifier.width(6.dp)); Text("Legal e privacidade") }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Exibir botão de visibilidade (olhinho)", style = MaterialTheme.typography.bodyMedium)
-                        Text("Se desativado, os valores ficam ocultos e o botão desaparece da tela Início.", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Switch(checked = showEyeButton, onCheckedChange = onShowEyeButtonChange)
-                }
                 OutlinedButton(onClick=onStartGuide, modifier=Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.HelpOutline, null)
                     Spacer(Modifier.width(6.dp))
@@ -3502,22 +3504,22 @@ private fun DashboardScreen(
     var dashboardDragOffset by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(dashboardCustomization.dashboardOrder, draggingDashboardId) {
-        if (draggingDashboardId == null && localDashboardOrder != dashboardCustomization.dashboardOrder) {
+        if (draggingDashboardId == null && localDashboardOrder != normalizeDashboardOrder(dashboardCustomization.dashboardOrder)) {
             localDashboardOrder.clear()
-            localDashboardOrder.addAll(dashboardCustomization.dashboardOrder)
+            localDashboardOrder.addAll(normalizeDashboardOrder(dashboardCustomization.dashboardOrder))
         }
     }
     if (localDashboardOrder.isEmpty()) {
-        localDashboardOrder.addAll(dashboardCustomization.dashboardOrder)
+        localDashboardOrder.addAll(normalizeDashboardOrder(dashboardCustomization.dashboardOrder))
     }
 
     fun finishDashboardDrag() {
         val dragged = draggingDashboardId ?: return
         draggingDashboardId = null
         dashboardDragOffset = 0f
-        if (localDashboardOrder != dashboardCustomization.dashboardOrder) {
+        if (localDashboardOrder != normalizeDashboardOrder(dashboardCustomization.dashboardOrder)) {
             onDashboardCustomizationChange(
-                dashboardCustomization.copy(dashboardOrder = localDashboardOrder.toList())
+                dashboardCustomization.copy(dashboardOrder = normalizeDashboardOrder(localDashboardOrder.toList()))
             )
         }
     }
