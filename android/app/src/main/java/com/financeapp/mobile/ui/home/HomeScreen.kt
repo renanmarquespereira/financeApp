@@ -464,6 +464,16 @@ fun HomeScreen(
     var showAttentionCenter by remember { mutableStateOf(false) }
     var attentionOldestFirstRequest by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
+    // Preferencias locais independentes de servidor.
+    val tourPrefs = remember(context) { context.getSharedPreferences("financeapp_first_access_guide_v1", Context.MODE_PRIVATE) }
+    var guideOpen by remember { mutableStateOf(!tourPrefs.getBoolean("completed", false)) }
+    var guideStep by remember { mutableIntStateOf(0) }
+    val displayPrefs = remember(context) { context.getSharedPreferences("financeapp_privacy_display", Context.MODE_PRIVATE) }
+    var showEyeButton by remember { mutableStateOf(displayPrefs.getBoolean("show_eye_button", true)) }
+    val finishGuide = {
+        guideOpen = false
+        tourPrefs.edit().putBoolean("completed", true).apply()
+    }
     val launchExpenseCodeScanner = rememberExpenseCodeScanner(
         onResult = { draft ->
             scannedExpenseDraft = draft
@@ -929,6 +939,7 @@ fun HomeScreen(
                     },
                     onOpenInvoices = { selectedTab = HomeTab.INVOICES },
                     onOpenDebts = { showDebtCenter = true },
+                    showVisibilityButton = showEyeButton,
                     dashboardCustomization = customization,
                     onDashboardCustomizationChange = { updated ->
                         customization = updated
@@ -1476,6 +1487,30 @@ fun HomeScreen(
         )
     }
 
+    if (guideOpen) {
+        FinanceFirstAccessGuide(
+            step = guideStep,
+            onNext = {
+                if (guideStep >= 7) finishGuide()
+                else {
+                    guideStep += 1
+                    selectedTab = when (guideStep) {
+                        0, 1, 2 -> HomeTab.DASHBOARD
+                        3 -> HomeTab.TRANSACTIONS
+                        4 -> HomeTab.ACCOUNTS
+                        5 -> HomeTab.LENT_MONEY
+                        6 -> HomeTab.FORECAST
+                        else -> HomeTab.DASHBOARD
+                    }
+                }
+            },
+            onPrevious = {
+                if (guideStep > 0) guideStep -= 1
+            },
+            onSkip = finishGuide
+        )
+    }
+
     if (showSettings && guest) {
         GuestOptionsDialog(
             frozen = false,
@@ -1509,6 +1544,12 @@ fun HomeScreen(
             onDiagnostics = { showSettings = false; showDiagnostics = true },
             onLegalPrivacy = { showSettings = false; showLegalPrivacy = true },
             onShowOnboarding = { showSettings = false; onShowOnboarding() },
+            showEyeButton = showEyeButton,
+            onShowEyeButtonChange = { enabled ->
+                showEyeButton = enabled
+                displayPrefs.edit().putBoolean("show_eye_button", enabled).apply()
+            },
+            onStartGuide = { showSettings = false; guideStep = 0; guideOpen = true },
             onNotifications = { showSettings = false; showNotificationSettings = true },
             onCreateBackup = { showSettings = false; showBackupSyncDialog = true },
             onRestoreBackup = { restoreBackupLauncher.launch(arrayOf("application/json","text/plain")) },
@@ -2797,6 +2838,9 @@ private fun AccountSettingsDialog(
     onDiagnostics: () -> Unit,
     onLegalPrivacy: () -> Unit,
     onShowOnboarding: () -> Unit,
+    showEyeButton: Boolean,
+    onShowEyeButtonChange: (Boolean) -> Unit,
+    onStartGuide: () -> Unit,
     onNotifications: () -> Unit,
     onCreateBackup: () -> Unit,
     onRestoreBackup: () -> Unit,
@@ -2882,6 +2926,18 @@ private fun AccountSettingsDialog(
                 OutlinedButton(onClick=onAppSettings, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Tune,null); Spacer(Modifier.width(6.dp)); Text("Personalizar aplicativo") }
                 OutlinedButton(onClick=onDiagnostics, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.HealthAndSafety,null); Spacer(Modifier.width(6.dp)); Text("Diagnóstico e segurança dos dados") }
                 OutlinedButton(onClick=onLegalPrivacy, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Gavel,null); Spacer(Modifier.width(6.dp)); Text("Legal e privacidade") }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Exibir botão de visibilidade (olhinho)", style = MaterialTheme.typography.bodyMedium)
+                        Text("Se desativado, os valores ficam ocultos e o botão desaparece da tela Início.", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = showEyeButton, onCheckedChange = onShowEyeButtonChange)
+                }
+                OutlinedButton(onClick=onStartGuide, modifier=Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.HelpOutline, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Refazer tutorial interativo")
+                }
                 OutlinedButton(onClick=onShowOnboarding, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.Slideshow,null); Spacer(Modifier.width(6.dp)); Text("Ver apresentação novamente") }
                 OutlinedButton(onClick=onNotifications, modifier=Modifier.fillMaxWidth()) { Icon(Icons.Default.NotificationsActive,null); Spacer(Modifier.width(6.dp)); Text("Notificações") }
                 HorizontalDivider()
@@ -3209,6 +3265,7 @@ private fun DashboardScreen(
     onOpenTransactions: () -> Unit,
     onOpenInvoices: () -> Unit,
     onOpenDebts: () -> Unit,
+    showVisibilityButton: Boolean,
     dashboardCustomization: AppCustomization,
     onDashboardCustomizationChange: (AppCustomization) -> Unit,
     onOpenPlanning: (Int?) -> Unit,
@@ -3222,6 +3279,9 @@ private fun DashboardScreen(
     }
     var dashboardAnnual by remember { mutableStateOf(false) }
     var dashboardValuesVisible by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(showVisibilityButton) {
+        if (!showVisibilityButton) dashboardValuesVisible = false
+    }
     var showFinanceCenters by remember { mutableStateOf(false) }
     val currentMonth = remember {
         YearMonth.now()
@@ -3536,7 +3596,8 @@ private fun DashboardScreen(
                             "CURRENT_VALUE" -> DashboardBalanceCard(
                                 value = currency.format(totalBalance),
                                 annual = dashboardAnnual,
-                                valuesVisible = dashboardValuesVisible,
+                                valuesVisible = dashboardValuesVisible && showVisibilityButton,
+                                showVisibilityButton = showVisibilityButton,
                                 workspaceName = workspaceName,
                                 onManageWorkspaces = onManageWorkspaces,
                                 onValuesVisibleChange = { dashboardValuesVisible = it },
@@ -3549,14 +3610,14 @@ private fun DashboardScreen(
                             ) {
                                 if ("INCOME" in visibleMetricIds) {
                                     DashboardMetricCard(
-                                        Modifier.weight(1f), "Entradas totais", if (dashboardValuesVisible) currency.format(accumulatedIncome) else "R$ ••••••",
+                                        Modifier.weight(1f), "Entradas totais", if (dashboardValuesVisible && showVisibilityButton) currency.format(accumulatedIncome) else "R$ ••••••",
                                         Icons.Default.ArrowDownward, Color(0xFF178A3A),
                                         Color(0xFFE9F8EF)
                                     )
                                 }
                                 if ("EXPENSES" in visibleMetricIds) {
                                     DashboardMetricCard(
-                                        Modifier.weight(1f), if (dashboardAnnual) "Saídas do ano" else "Saídas do mês", if (dashboardValuesVisible) currency.format(periodExpense) else "R$ ••••••",
+                                        Modifier.weight(1f), if (dashboardAnnual) "Saídas do ano" else "Saídas do mês", if (dashboardValuesVisible && showVisibilityButton) currency.format(periodExpense) else "R$ ••••••",
                                         Icons.Default.ArrowUpward, MaterialTheme.colorScheme.error,
                                         Color(0xFFFFEFF1)
                                     )
@@ -3981,6 +4042,7 @@ private fun DashboardBalanceCard(
     value: String,
     annual: Boolean,
     valuesVisible: Boolean,
+    showVisibilityButton: Boolean,
     workspaceName: String,
     onManageWorkspaces: () -> Unit,
     onValuesVisibleChange: (Boolean) -> Unit,
@@ -4084,7 +4146,7 @@ private fun DashboardBalanceCard(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                IconButton(
+                                if (showVisibilityButton) IconButton(
                                     onClick = { onValuesVisibleChange(!valuesVisible) },
                                     modifier = Modifier.size(32.dp)
                                 ) {
@@ -4145,7 +4207,7 @@ private fun DashboardBalanceCard(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                IconButton(
+                                if (showVisibilityButton) IconButton(
                                     onClick = { onValuesVisibleChange(!valuesVisible) },
                                     modifier = Modifier.size(30.dp)
                                 ) {
