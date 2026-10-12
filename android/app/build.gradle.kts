@@ -24,7 +24,7 @@ android {
 
     defaultConfig {
         applicationId = "com.financeapp.mobileApp"
-        minSdk = 23
+        minSdk = 24
         targetSdk = 37
         versionCode = 37
         versionName = "3.7.0"
