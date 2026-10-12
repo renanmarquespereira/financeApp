@@ -57,7 +57,11 @@ class _FinanceAppState extends State<FinanceApp> with WidgetsBindingObserver{
   void initState(){
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _forecastTimer=Timer.periodic(const Duration(seconds:30),(_)=>_syncSavedCollections());
+    // Sincronizacao periodica e exclusiva da versao Web.
+    // Android/iOS funcionam com dados locais e backup controlado pelo usuario.
+    if (!_mobileLocalOnly) {
+      _forecastTimer=Timer.periodic(const Duration(seconds:30),(_)=>_syncSavedCollections());
+    }
     _bootstrap();
   }
 

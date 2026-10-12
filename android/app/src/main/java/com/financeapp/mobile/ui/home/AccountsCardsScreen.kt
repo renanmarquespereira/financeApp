@@ -197,13 +197,13 @@ private fun accountVisualBankName(account: AccountEntity): String {
     }
 }
 
-private data class BankVisual(
+internal data class BankVisual(
     val mark: String,
     val background: Color,
     val foreground: Color
 )
 
-private fun bankVisual(bankName: String): BankVisual {
+internal fun bankVisual(bankName: String): BankVisual {
     val n = normalizedBankKey(bankName)
     return when {
         "nubank" in n || n == "nu" -> BankVisual("nu", Color(0xFF820AD1), Color.White)

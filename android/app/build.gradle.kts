@@ -85,6 +85,10 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
+    // Google AdMob + consentimento UMP
+    implementation("com.google.android.gms:play-services-ads:24.7.0")
+    implementation("com.google.android.ump:user-messaging-platform:3.2.0")
+
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")

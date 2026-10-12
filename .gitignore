@@ -72,3 +72,40 @@ _backup_patch_*/
 android/.kotlin/
 
 keystore.properties
+# Arquivos secretos
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+key.properties
+*.pem
+*.p12
+*.p8
+google-services.json
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Flutter e Android
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.gradle/
+local.properties
+*.apk
+*.aab
+*.ipa
+
+# IDE
+.idea/
+.vscode/
+
+# Arquivos temporarios
+*.log
+*.tmp
+*.bak

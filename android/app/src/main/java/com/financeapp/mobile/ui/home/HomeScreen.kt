@@ -824,6 +824,10 @@ fun HomeScreen(
             }
         },
         bottomBar = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (selectedTab == HomeTab.DASHBOARD) {
+                    FinanceAdBanner()
+                }
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                 // Mantém o tamanho normal quando há espaço e só reduz em telas realmente estreitas.
                 val navLabelSize = when {
@@ -884,6 +888,7 @@ fun HomeScreen(
                     }
                 }
             }
+            } // Coluna: anuncio + barra de navegacao
         }
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {

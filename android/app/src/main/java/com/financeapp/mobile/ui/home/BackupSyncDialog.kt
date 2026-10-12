@@ -81,6 +81,15 @@ private fun formatBackupTime(epoch: Long): String {
     }.getOrDefault("Ainda não realizado")
 }
 
+// O proximo backup e uma previsao: a rotina automatica executa ao abrir o app apos o prazo.
+private fun nextAutomaticBackupLabel(intervalDays: Int, lastAutomaticAt: Long, hasDestination: Boolean): String {
+    if (intervalDays <= 0 || !hasDestination) return "Nenhum backup agendado"
+    if (lastAutomaticAt <= 0L) return "Na proxima abertura do aplicativo"
+    val nextAt = lastAutomaticAt + intervalDays.toLong() * 86_400_000L
+    if (nextAt <= System.currentTimeMillis()) return "Pendente - na proxima abertura do aplicativo"
+    return formatBackupTime(nextAt)
+}
+
 private fun isGoogleDriveUri(uri: Uri): Boolean {
     val authority = uri.authority.orEmpty().lowercase()
     return authority.contains("google") || authority == "com.google.android.apps.docs.storage"
@@ -170,6 +179,7 @@ fun BackupSyncDialog(
     val prefs = remember { context.backupPrefs() }
     var intervalDays by remember { mutableStateOf(prefs.getInt(KEY_INTERVAL, 0)) }
     var lastBackupAt by remember { mutableStateOf(prefs.getLong(KEY_LAST, 0L)) }
+    var lastAutomaticAt by remember { mutableStateOf(prefs.getLong(KEY_LAST_AUTO, 0L)) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var selectedManageUri by remember { mutableStateOf<Uri?>(null) }
@@ -236,6 +246,7 @@ fun BackupSyncDialog(
                         val now = System.currentTimeMillis()
                         intervalDays = days
                         lastBackupAt = now
+                        lastAutomaticAt = now
                         lastAutoError = null
                         prefs.edit().putInt(KEY_INTERVAL, days)
                             .putString(KEY_URI, uri.toString())
@@ -329,6 +340,13 @@ fun BackupSyncDialog(
 
                 Spacer(Modifier.height(16.dp))
                 Text("Backup automático", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Próximo backup previsto: ${nextAutomaticBackupLabel(intervalDays, lastAutomaticAt, !prefs.getString(KEY_URI, null).isNullOrBlank())}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text("O backup é executado ao abrir o FinanceApp depois da data prevista; o horário não é garantido.", style = MaterialTheme.typography.bodySmall)
                 Text("Escolha a periodicidade. O arquivo é atualizado no Google Drive quando o FinanceApp for aberto após o prazo.", style = MaterialTheme.typography.bodySmall)
                 lastAutoError?.takeIf { it.isNotBlank() }?.let { failure ->
                     Spacer(Modifier.height(6.dp))

@@ -185,36 +185,6 @@ private fun invoicePaymentAccountLabel(account: AccountEntity): String {
     return listOfNotNull(bankName, detail).joinToString(" • ")
 }
 
-private fun bankCardColor(name: String): Color {
-    val n = name.lowercase(Locale("pt", "BR")).replace(" ", "")
-    return when {
-        "nubank" in n || "nu" == n -> Color(0xFF6F2DBD)
-        "bancodobrasil" in n || n == "bb" || "001" in n -> Color(0xFFF4C400)
-        "itau" in n || "341" in n -> Color(0xFFEC7000)
-        "bradesco" in n || "237" in n -> Color(0xFFCC092F)
-        "santander" in n || "033" in n -> Color(0xFFEC0000)
-        "inter" in n || "077" in n -> Color(0xFFFF7A00)
-        "c6" in n || "336" in n -> Color(0xFF202124)
-        "caixa" in n || "104" in n -> Color(0xFF005CA9)
-        "picpay" in n -> Color(0xFF11C76F)
-        "mercadopago" in n -> Color(0xFF009EE3)
-        else -> Color(0xFF1769E0)
-    }
-}
-
-private fun bankCardContentColor(name: String): Color {
-    val n = name.lowercase(Locale("pt", "BR")).replace(" ", "")
-    return if ("bancodobrasil" in n || n == "bb" || "001" in n) Color(0xFF12335B) else Color.White
-}
-
-// Detecta a linha Black pelo nome do banco, apelido ou bandeira/variante
-// do cartao. Nao altera a cor dos demais cartoes.
-private fun isBlackInvoiceCard(card: CreditCardDto): Boolean {
-    val blackWord = Regex("(?i)\\bblack\\b")
-    return listOfNotNull(card.bankName, card.nickname, card.brand)
-        .any { blackWord.containsMatchIn(it) }
-}
-
 private data class MonthInvoice(
     val end: LocalDate,
     val due: LocalDate?,
@@ -281,9 +251,10 @@ fun InvoiceCenterScreen(
                 activeCards.forEach { card ->
                     val selected = selectedCardId == card.id
                     val cardInvoice = monthInvoice(card, month, transactions)
-                    val black = isBlackInvoiceCard(card)
-                    val bg = if (black) Color(0xFF101010) else bankCardColor(card.bankName)
-                    val fg = if (black) Color.White else bankCardContentColor(card.bankName)
+                    // Mesma paleta exibida em Bancos e Cartoes: uma unica regra por banco.
+                    val visual = remember(card.bankName) { bankVisual(card.bankName) }
+                    val bg = visual.background
+                    val fg = visual.foreground
                     Card(
                         modifier = Modifier.width(250.dp).height(145.dp).clickable { selectedCardId = card.id },
                         shape = RoundedCornerShape(20.dp),

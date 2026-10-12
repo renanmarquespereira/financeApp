@@ -18,6 +18,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FinanceApp"
         android:usesCleartextTraffic="false">
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-6368197822240427~3157492780" />
+
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

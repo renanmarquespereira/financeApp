@@ -77,7 +77,9 @@ class _BackupSyncScreenState extends State<BackupSyncScreen>{
     FilledButton.icon(onPressed:busy?null:_backup,icon:const Icon(Icons.cloud_upload_outlined),label:const Text('Fazer backup agora')),
     const SizedBox(height:10),OutlinedButton.icon(onPressed:busy?null:_chooseRestore,icon:const Icon(Icons.restore),label:const Text('Restaurar backup')),
     const SizedBox(height:10),OutlinedButton.icon(onPressed:busy?null:_manage,icon:const Icon(Icons.folder_open_outlined),label:const Text('Gerenciar backups')),
-    const Divider(height:32),Text('Backup automático',style:Theme.of(context).textTheme.titleMedium),const SizedBox(height:6),const Text('O backup é executado quando o FinanceApp for aberto após o intervalo escolhido.'),const SizedBox(height:10),
+    const Divider(height:32),Text('Backup automático',style:Theme.of(context).textTheme.titleMedium),const SizedBox(height:6),
+    Card(child:ListTile(leading:const Icon(Icons.event_available_outlined),title:const Text('Próximo backup previsto'),subtitle:Text(nextLabel),isThreeLine:false)),
+    const SizedBox(height:6),const Text('O backup é executado quando o FinanceApp for aberto após o intervalo escolhido; o horário não é garantido.'),const SizedBox(height:10),
     DropdownButtonFormField<int>(value:interval,decoration:const InputDecoration(labelText:'Periodicidade',border:OutlineInputBorder()),items:const[DropdownMenuItem(value:0,child:Text('Desativado')),DropdownMenuItem(value:7,child:Text('A cada 7 dias')),DropdownMenuItem(value:15,child:Text('A cada 15 dias')),DropdownMenuItem(value:30,child:Text('A cada 30 dias'))],onChanged:busy?null:(v)async{final days=v??0;if(days>0&&await service.connect()==null)return;await GoogleDriveBackupService.setIntervalDays(days);if(mounted)setState(()=>interval=days);}),
     const SizedBox(height:16),const Text('Restaurar um backup nunca acontece automaticamente. Somente você pode iniciar uma restauração.',style:TextStyle(fontWeight:FontWeight.w600)),
   ]));
