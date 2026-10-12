@@ -23,7 +23,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.financeapp.mobile"
+        applicationId = "com.financeapp.mobileApp"
         minSdk = 23
         targetSdk = 37
         versionCode = 37
