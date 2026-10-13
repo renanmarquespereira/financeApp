@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.*
@@ -49,11 +48,7 @@ fun OnboardingScreen(
                 "Planeje antes de gastar",
                 "Use categorias, metas, previsão financeira e contas a pagar para enxergar o mês antes que ele termine.",
             ),
-            OnboardingPage(
-                Icons.Default.AutoAwesome,
-                "Inteligência para ajudar nas decisões",
-                "Use os recursos de IA do FinanceApp para entender seus dados, criar planos e acompanhar cenários financeiros.",
-            ),
+
         )
     }
     var page by rememberSaveable { mutableIntStateOf(0) }

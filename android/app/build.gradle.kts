@@ -26,9 +26,8 @@ android {
         applicationId = "com.financeapp.mobileApp"
         minSdk = 24
         targetSdk = 37
-        versionCode = 38
-        versionName = "3.8.0"
-
+        versionCode = 39
+        versionName = "3.9.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"152655487934-rps2j6acpa2btg0cg7itlqrt5vjunrp6.apps.googleusercontent.com\"")
         buildConfigField("String", "API_BASE_URL", "\"$escapedApiBaseUrl\"")
