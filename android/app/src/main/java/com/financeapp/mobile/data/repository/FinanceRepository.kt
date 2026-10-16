@@ -2474,6 +2474,29 @@ class FinanceRepository @Inject constructor(
         }
     }
 
+    suspend fun changeTransactionPayment(
+        transactionId: Int, accountId: Int?, categoryId: Int?, description: String,
+        amount: Double, type: String, date: String, cardId: Int?, installmentTotal: Int
+    ): Unit = withWorkspace {
+        require(description.isNotBlank() && amount != 0.0) { "Preencha descrição e valor." }
+        require(installmentTotal in 1..360) { "Parcelamento inválido." }
+        require(cardId != null || installmentTotal == 1) { "Parcelas exigem cartão." }
+        require(cardId == null || type == "debit") { "Compra no cartão deve ser saída." }
+        validateReferences(if (cardId == null) accountId else null, categoryId, cardId)
+        val original = dao.transactionById(transactionId) ?: error("Transação não encontrada.")
+        require(original.source in setOf("manual", "card_purchase", "voice")) {
+            "Esta movimentação não permite trocar a forma de pagamento."
+        }
+        // A operação inteira é atômica: se a recriação falhar, a original continua intacta.
+        database.withTransaction {
+            createManual(
+                if (cardId != null) null else accountId, categoryId, description, amount,
+                type, date, cardId, installmentTotal, date
+            )
+            check(deleteTransaction(original) >= 1) { "Não foi possível substituir a transação original." }
+        }
+    }
+
     suspend fun updateTransactionCategory(
         transactionId: Int,
         categoryId: Int?

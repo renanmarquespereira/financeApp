@@ -278,6 +278,7 @@ class MainActivity : FragmentActivity() {
                             homeViewModel::deleteGoalContribution,
                         onDeleteGoal = homeViewModel::deleteGoal,
                         onUpdateManualTransaction = homeViewModel::updateManualTransaction,
+                        onChangeTransactionPayment = homeViewModel::changeTransactionPayment,
                         onUpdateTransactionCategory = homeViewModel::updateTransactionCategory,
                         onListTransactionAttachments = homeViewModel::transactionAttachments,
                         onUploadTransactionAttachment = homeViewModel::uploadTransactionAttachment,

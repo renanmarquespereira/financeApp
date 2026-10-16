@@ -37,8 +37,7 @@ internal fun monthlyBudgetOverview(budgets: List<BudgetDto>, categories: List<Ca
     val expenses = transactions.filter { tx ->
         val date = runCatching { LocalDate.parse(tx.date.take(10)) }.getOrNull()
         tx.amount < 0 &&
-            tx.source != "card_purchase" &&
-            !(tx.cardId != null && tx.source != "card_payment") &&
+            tx.source != "card_payment" &&
             date != null &&
             if (annual) date.year == month.year else YearMonth.from(date) == month
     }

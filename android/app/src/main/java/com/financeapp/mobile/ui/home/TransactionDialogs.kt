@@ -205,12 +205,21 @@ internal fun TransactionDetailsDialog(
 internal fun EditTransactionDialog(
     tx: TransactionEntity,
     accounts: List<AccountEntity>,
+    cards: List<CreditCardDto>,
     categories: List<CategoryDto>,
+    originalTotal: Double,
     onCreateCategory: (String, String?, (CategoryDto) -> Unit) -> Unit,
     onDismiss: () -> Unit,
-    onSave: (Int?, Int?, String, Double, String, String) -> Unit
+    onSave: (Int?, Int?, String, Double, String, String) -> Unit,
+    onChangePayment: (Int?, Int?, String, Double, String, String, Int?, Int, (Boolean) -> Unit) -> Unit
 ) {
     var selectedAccountId by remember(tx.id) { mutableStateOf(tx.accountId) }
+    var selectedCardId by remember(tx.id) { mutableStateOf(tx.cardId) }
+    var cardMenu by remember(tx.id) { mutableStateOf(false) }
+    var installmentCount by remember(tx.id) { mutableIntStateOf((tx.installmentTotal ?: 1).coerceIn(1, 360)) }
+    var amountIsPerInstallment by remember(tx.id) { mutableStateOf(false) }
+    var saving by remember(tx.id) { mutableStateOf(false) }
+    var confirmConversion by remember(tx.id) { mutableStateOf(false) }
     var selectedCategoryId by remember(tx.id) { mutableStateOf(tx.categoryId) }
     var accountMenu by remember { mutableStateOf(false) }
     var categoryMenu by remember { mutableStateOf(false) }
@@ -218,8 +227,7 @@ internal fun EditTransactionDialog(
     var description by remember(tx.id) { mutableStateOf(tx.description) }
     var amountDigits by remember(tx.id) {
         mutableStateOf(
-            (kotlin.math.abs(tx.amount) * 100)
-                .toLong()
+            (kotlin.math.abs(originalTotal) * 100).toLong()
                 .toString()
         )
     }
@@ -235,17 +243,44 @@ internal fun EditTransactionDialog(
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!saving) onDismiss() },
         title = { Text(if (tx.cardId != null) "Editar compra do cartão" else "Editar transação") },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (tx.cardId != null) {
-                    Text("Compra vinculada ao cartão #${tx.cardId}. Este editor altera descrição, valor, data e categoria. Troca de cartão e parcelamento ainda não estão disponíveis.", style = MaterialTheme.typography.bodySmall)
+                Text("Forma de pagamento", style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = selectedCardId == null, onClick = { selectedCardId = null; installmentCount = 1; amountIsPerInstallment = false })
+                    Text("Conta / Pix / Dinheiro")
                 }
-                Box {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = selectedCardId != null, onClick = { selectedCardId = selectedCardId ?: cards.firstOrNull()?.id; type = "debit" })
+                    Text("Cartão de crédito")
+                }
+                if (selectedCardId != null || (tx.cardId != null && selectedCardId == null)) {
+                    if (selectedCardId != null) {
+                        Box {
+                            OutlinedButton(onClick = { cardMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text(cards.firstOrNull { it.id == selectedCardId }?.let { it.nickname?.takeIf(String::isNotBlank) ?: it.bankName } ?: "Selecionar cartão")
+                            }
+                            DropdownMenu(expanded = cardMenu, onDismissRequest = { cardMenu = false }) {
+                                cards.forEach { card ->
+                                    DropdownMenuItem(text = { Text(card.nickname?.takeIf(String::isNotBlank) ?: card.bankName) }, onClick = { selectedCardId = card.id; cardMenu = false })
+                                }
+                            }
+                        }
+                        Text("Parcelas: ${installmentCount}x", fontWeight = FontWeight.SemiBold)
+                        Slider(value = installmentCount.coerceIn(1,48).toFloat(), onValueChange = { installmentCount = it.toInt().coerceIn(1,48) }, valueRange = 1f..48f, steps = 46)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = amountIsPerInstallment, onCheckedChange = { amountIsPerInstallment = it })
+                            Text("Valor informado é de cada parcela")
+                        }
+                    }
+                }
+                if (selectedCardId == null) Text("Para movimentação bancária, escolha a conta abaixo.", style = MaterialTheme.typography.bodySmall)
+                if (selectedCardId == null) Box {
                     OutlinedButton(
                         onClick = { accountMenu = true },
                         modifier = Modifier.fillMaxWidth()
@@ -341,7 +376,7 @@ internal fun EditTransactionDialog(
                     amountDigits,
                     { amountDigits = BrlMoney.digits(it) },
                     Modifier.fillMaxWidth(),
-                    label = { Text("Valor") },
+                    label = { Text(if (selectedCardId != null && installmentCount > 1 && amountIsPerInstallment) "Valor da parcela" else "Valor total") },
                     placeholder = { Text("R$ 0,00") },
                     singleLine = true,
                     visualTransformation = BrlMoneyVisualTransformation,
@@ -363,7 +398,7 @@ internal fun EditTransactionDialog(
                     )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (selectedCardId == null) Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
                         selected = type == "debit",
                         onClick = { type = "debit" }
@@ -382,29 +417,45 @@ internal fun EditTransactionDialog(
             Button(
                 onClick = {
                     val raw = BrlMoney.toDouble(amountDigits)
-                    val signed = if (type == "debit") -abs(raw) else abs(raw)
-                    val date = selectedDate
-                        .atTime(originalTime)
-                        .atZone(ZoneId.systemDefault())
-                        .toOffsetDateTime()
-                        .toString()
-                    onSave(
-                        selectedAccountId,
-                        selectedCategoryId,
-                        description,
-                        signed,
-                        type,
-                        date
-                    )
+                    val total = if (selectedCardId != null && installmentCount > 1 && amountIsPerInstallment) raw * installmentCount else raw
+                    val signed = if (selectedCardId != null || type == "debit") -abs(total) else abs(total)
+                    val date = selectedDate.atTime(originalTime).atZone(ZoneId.systemDefault()).toOffsetDateTime().toString()
+                    val changing = selectedCardId != tx.cardId || (tx.installmentTotal ?: 1) != installmentCount || (tx.installmentTotal ?: 1) > 1
+                    if (changing) confirmConversion = true
+                    else onSave(if (selectedCardId != null) null else selectedAccountId, selectedCategoryId, description, signed, if (selectedCardId != null) "debit" else type, date)
                 },
-                enabled = description.isNotBlank() &&
-                    BrlMoney.toDouble(amountDigits) > 0.0
-            ) { Text("Salvar") }
+                enabled = !saving && description.isNotBlank() && BrlMoney.toDouble(amountDigits) > 0.0 &&
+                    (selectedCardId == null || cards.any { it.id == selectedCardId }) &&
+                    !(selectedCardId != null && type == "credit")
+            ) { Text(if (saving) "Salvando..." else "Salvar") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancelar") }
         }
     )
+
+    if (confirmConversion) {
+        AlertDialog(
+            onDismissRequest = { if (!saving) confirmConversion = false },
+            title = { Text("Confirmar alteração do pagamento") },
+            text = { Text("A compra será recriada com a forma de pagamento e parcelas selecionadas. O lançamento original e as parcelas ligadas a ele serão substituídos. Confira a fatura e o saldo após salvar.") },
+            confirmButton = {
+                Button(onClick = {
+                    saving = true
+                    val value = BrlMoney.toDouble(amountDigits)
+                    val total = if (selectedCardId != null && installmentCount > 1 && amountIsPerInstallment) value * installmentCount else value
+                    val signed = if (selectedCardId != null || type == "debit") -abs(total) else abs(total)
+                    val date = selectedDate.atTime(originalTime).atZone(ZoneId.systemDefault()).toOffsetDateTime().toString()
+                    onChangePayment(if (selectedCardId != null) null else selectedAccountId, selectedCategoryId, description, signed, if (selectedCardId != null) "debit" else type, date, selectedCardId, if (selectedCardId != null) installmentCount else 1) { success ->
+                        saving = false
+                        confirmConversion = false
+                        if (success) onDismiss()
+                    }
+                }, enabled = !saving) { Text("Confirmar") }
+            },
+            dismissButton = { TextButton(onClick = { confirmConversion = false }, enabled = !saving) { Text("Cancelar") } }
+        )
+    }
 
     if (showDatePicker) {
         val zone = ZoneOffset.UTC

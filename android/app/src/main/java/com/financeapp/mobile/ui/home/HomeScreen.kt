@@ -231,6 +231,7 @@ fun HomeScreen(
     onUpdateManualTransaction: (
         Int, Int?, Int?, String, Double, String, String
     ) -> Unit,
+    onChangeTransactionPayment: (Int, Int?, Int?, String, Double, String, String, Int?, Int, (Boolean) -> Unit) -> Unit,
     onUpdateTransactionCategory: (Int, Int?) -> Unit,
     onListTransactionAttachments: suspend (Int) -> List<com.financeapp.mobile.data.remote.TransactionAttachmentDto>,
     onUploadTransactionAttachment: suspend (Int, String, String, ByteArray) -> com.financeapp.mobile.data.remote.TransactionAttachmentDto,
@@ -2038,6 +2039,10 @@ fun HomeScreen(
         EditTransactionDialog(
             tx = tx,
             accounts = accounts,
+            cards = cards,
+            originalTotal = if ((tx.installmentTotal ?: 1) > 1 && tx.installmentGroup != null)
+                transactions.filter { it.installmentGroup == tx.installmentGroup }.sumOf { kotlin.math.abs(it.amount) }
+            else kotlin.math.abs(tx.amount),
             categories = categories,
             onCreateCategory = onCreateCategory,
             onDismiss = { editingTransaction = null },
@@ -2060,6 +2065,15 @@ fun HomeScreen(
                 VoiceReviewMarker.reviewed(appContext, tx)
                 voiceReviewVersion++
                 editingTransaction = null
+            },
+            onChangePayment = { accountId, categoryId, description, amount, type, date, cardId, installments, onComplete ->
+                onChangeTransactionPayment(tx.id, accountId, categoryId, description, amount, type, date, cardId, installments) { success ->
+                    if (success) {
+                        VoiceReviewMarker.reviewed(appContext, tx)
+                        voiceReviewVersion++
+                    }
+                    onComplete(success)
+                }
             }
         )
     }

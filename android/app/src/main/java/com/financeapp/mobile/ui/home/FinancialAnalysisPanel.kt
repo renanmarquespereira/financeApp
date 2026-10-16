@@ -2,6 +2,11 @@ package com.financeapp.mobile.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,7 +76,7 @@ internal fun FinancialAnalysisPanel(
                 tx.source != "card_payment" && !tx.source.contains("transfer", ignoreCase = true)
         }.groupBy { categoryNames[it.categoryId] ?: "Sem categoria" }
             .map { AnalysisCategory(it.key, it.value.sumOf { tx -> abs(tx.amount) }) }
-            .filter { it.value > 0.001 }.sortedByDescending { it.value }.take(5)
+            .filter { it.value > 0.001 }.sortedByDescending { it.value }
     }
     val maxBar = (months.maxOfOrNull { maxOf(it.income, it.expense) } ?: 0.0).coerceAtLeast(1.0)
     val expenseDelta = if (lastMonth != null && lastMonth.expense > 0.0 && thisMonth != null)
@@ -117,16 +122,46 @@ internal fun FinancialAnalysisPanel(
             if (expenseCategories.isEmpty()) Text("Nenhuma despesa registrada neste mês.", style = MaterialTheme.typography.bodySmall)
             else {
                 val total = expenseCategories.sumOf { it.value }.coerceAtLeast(0.01)
-                expenseCategories.forEach { category ->
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(category.name, style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(currency.format(category.value), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                // Exibe todas as categorias sem alongar a tela de Previsao.
+                // A barra lateral representa a posicao da rolagem nesta lista.
+                val categoryScroll = rememberScrollState()
+                val categoryBarColor = MaterialTheme.colorScheme.primary
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp)
+                        .verticalScroll(categoryScroll)
+                        .drawWithContent {
+                            drawContent()
+                            if (categoryScroll.maxValue > 0) {
+                                val barWidth = 3.dp.toPx()
+                                val barHeight = (size.height * size.height /
+                                    (size.height + categoryScroll.maxValue.toFloat()))
+                                    .coerceAtLeast(24.dp.toPx()).coerceAtMost(size.height)
+                                val travel = size.height - barHeight
+                                val y = travel * categoryScroll.value.toFloat() / categoryScroll.maxValue
+                                drawRoundRect(
+                                    color = categoryBarColor.copy(alpha = 0.85f),
+                                    topLeft = Offset(size.width - barWidth, y),
+                                    size = Size(barWidth, barHeight),
+                                    cornerRadius = CornerRadius(barWidth / 2f)
+                                )
+                            }
                         }
-                        LinearProgressIndicator(progress = { (category.value / total).toFloat().coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth().height(7.dp), color = analysisBlue,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(end = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    expenseCategories.forEach { category ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(category.name, style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(currency.format(category.value), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                            }
+                            LinearProgressIndicator(progress = { (category.value / total).toFloat().coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().height(7.dp), color = analysisBlue,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant)
+                        }
                     }
                 }
             }

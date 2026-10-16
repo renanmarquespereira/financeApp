@@ -1016,6 +1016,23 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun changeTransactionPayment(
+        transactionId: Int, accountId: Int?, categoryId: Int?, description: String,
+        amount: Double, type: String, date: String, cardId: Int?, installmentTotal: Int,
+        onComplete: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch(screenContext) {
+            try {
+                repository.changeTransactionPayment(transactionId, accountId, categoryId, description, amount, type, date, cardId, installmentTotal)
+                _state.value = _state.value.copy(message = "Forma de pagamento atualizada.")
+                onComplete(true)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = e.message ?: "Não foi possível alterar o pagamento.")
+                onComplete(false)
+            }
+        }
+    }
+
     fun updateTransactionCategory(
         transactionId: Int,
         categoryId: Int?
