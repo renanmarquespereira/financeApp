@@ -113,7 +113,7 @@ class _TransactionsViewState extends State<TransactionsView> {
     final r=widget.snapshot.transactions.where((t){
       final d=dateOf(t.date);
       if(d==null)return false;
-      if(q.isEmpty&&(d.year!=selectedMonth.year || d.month!=selectedMonth.month))return false;
+      if(q.isEmpty && !hasFilters && (d.year!=selectedMonth.year || d.month!=selectedMonth.month))return false;
       if(view=='expenses'&&(t.isCard||t.source=='card_purchase')&&t.source!='card_payment')return false;
       if(view=='cards'&&(t.description.startsWith('Prevista • Dívida • ') || !t.isCard || t.cardId!=cardId))return false;
       if(source=='manual'&&t.source!='manual'||source=='open_finance'&&t.source!='open_finance')return false;

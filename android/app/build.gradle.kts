@@ -26,7 +26,7 @@ android {
         applicationId = "com.financeapp.mobileApp"
         minSdk = 24
         targetSdk = 37
-        versionCode = 41
+        versionCode = 42
         versionName = "4.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"152655487934-rps2j6acpa2btg0cg7itlqrt5vjunrp6.apps.googleusercontent.com\"")

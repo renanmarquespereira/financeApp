@@ -255,6 +255,14 @@ internal object VoiceTransactionParser {
                 if (reais > 0.0 || cents > 0.0) return reais + cents.coerceIn(0.0, 99.0) / 100.0
             }
 
+        // Valor total numerico mesmo sem "reais": "1000 dividido em 10 vezes".
+        // Nao confundir a quantidade de parcelas com o valor monetario.
+        val spokenTotal = Regex("""\b(?:de|por|valor(?:\s+total)?(?:\s+de)?)\s+(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\b""", RegexOption.IGNORE_CASE)
+            .findAll(text)
+            .mapNotNull { parseBrazilianNumber(it.groupValues[1]) }
+            .firstOrNull { it > 0.0 }
+        if (spokenTotal != null) return spokenTotal
+
         val currencyNumberPattern = Regex("""(?:r\$\s*)(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)|(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:reais|real)\b|(\d+,\d{1,2})""", RegexOption.IGNORE_CASE)
         currencyNumberPattern.find(text)?.let { match ->
             val raw = match.groupValues.drop(1).firstOrNull { it.isNotBlank() }.orEmpty()
@@ -282,7 +290,7 @@ internal object VoiceTransactionParser {
     }
 
     private fun parseBrazilianNumber(raw: String): Double? {
-        val cleaned = if (raw.contains(',')) raw.replace(".", "").replace(',', '.') else raw
+        val cleaned = if (raw.contains(',') || Regex("""^\d{1,3}(?:\.\d{3})+$""").matches(raw)) raw.replace(".", "").replace(',', '.') else raw
         return cleaned.toDoubleOrNull()
     }
 

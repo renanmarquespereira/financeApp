@@ -21,6 +21,7 @@ import '../planning/planning_screen.dart';
 import '../summary/summary_screen.dart';
 import 'insights_views.dart';
 import 'transactions_view.dart';
+import 'category_picker.dart';
 import 'expense_scan.dart';
 import 'debt_center.dart';
 
@@ -4424,20 +4425,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  DropdownButtonFormField<int>(
-                    initialValue: categoryId,
-                    items: _categoryCache
-                        .map(
-                          (e) => DropdownMenuItem(
-                            value: e.id,
-                            child: Text(e.name),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => set(() => categoryId = v),
-                    decoration: const InputDecoration(
-                      labelText: 'Categoria (opcional)',
-                    ),
+                  ListTile(
+                    title: const Text('Categoria (opcional)'),
+                    subtitle: Text(_categoryCache.where((e) => e.id == categoryId).map((e) => e.name).firstOrNull ?? 'Sem categoria'),
+                    trailing: const Icon(Icons.search),
+                    onTap: () async {
+                      final value = await showSearchableCategoryPicker(
+                        context: context,
+                        categories: _categoryCache.map((e) => MapEntry(e.id, e.name)).toList(),
+                        selectedId: categoryId,
+                      onAdd: _createCategory,
+                      );
+                      if (value != null) set(() => categoryId = value == -1 ? null : value);
+                    },
                   ),
                   const SizedBox(height: 10),
                   Align(
@@ -4682,18 +4682,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   onChanged: (v) => set(() => accountId = v),
                   decoration: const InputDecoration(labelText: 'Banco/conta'),
                 ),
-                DropdownButtonFormField<int>(
-                  initialValue: _categoryCache.any((a) => a.id == categoryId)
-                      ? categoryId
-                      : null,
-                  items: _categoryCache
-                      .map(
-                        (e) =>
-                            DropdownMenuItem(value: e.id, child: Text(e.name)),
-                      )
-                      .toList(),
-                  onChanged: (v) => set(() => categoryId = v),
-                  decoration: const InputDecoration(labelText: 'Categoria'),
+                ListTile(
+                  title: const Text('Categoria'),
+                  subtitle: Text(_categoryCache.where((e) => e.id == categoryId).map((e) => e.name).firstOrNull ?? 'Sem categoria'),
+                  trailing: const Icon(Icons.search),
+                  onTap: () async {
+                    final value = await showSearchableCategoryPicker(
+                      context: context,
+                      categories: _categoryCache.map((e) => MapEntry(e.id, e.name)).toList(),
+                      selectedId: categoryId,
+                      onAdd: _createCategory,
+                    );
+                    if (value != null) set(() => categoryId = value == -1 ? null : value);
+                  },
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -5023,23 +5024,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Expanded(
-                        child: DropdownButtonFormField<int>(
-                          initialValue:
-                              _categoryCache.any((e) => e.id == categoryId)
-                              ? categoryId
-                              : null,
-                          items: _categoryCache
-                              .map(
-                                (e) => DropdownMenuItem(
-                                  value: e.id,
-                                  child: Text(e.name),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) => set(() => categoryId = v),
-                          decoration: const InputDecoration(
-                            labelText: 'Categoria',
-                          ),
+                        child: ListTile(
+                          title: const Text('Categoria'),
+                          subtitle: Text(_categoryCache.where((e) => e.id == categoryId).map((e) => e.name).firstOrNull ?? 'Sem categoria'),
+                          trailing: const Icon(Icons.search),
+                          onTap: () async {
+                            final value = await showSearchableCategoryPicker(
+                              context: context,
+                              categories: _categoryCache.map((e) => MapEntry(e.id, e.name)).toList(),
+                              selectedId: categoryId,
+                              onAdd: _createCategory,
+                            );
+                            if (value != null) set(() => categoryId = value == -1 ? null : value);
+                          },
                         ),
                       ),
                       const SizedBox(width: 8),

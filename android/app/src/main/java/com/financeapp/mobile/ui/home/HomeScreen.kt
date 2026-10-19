@@ -356,7 +356,12 @@ fun HomeScreen(
             if (spoken.isNullOrBlank()) {
                 voiceError = "Não consegui entender o que foi falado. Tente novamente."
             } else {
-                val localDraft = VoiceTransactionParser.parse(spoken, accounts, categories, cards)
+                val recognizedDraft = VoiceTransactionParser.parse(spoken, accounts, categories, cards)
+                // Sem mencionar o nome, um unico cartao pode ser selecionado com seguranca.
+                // Com varios cartoes, o usuario precisa indicar qual deles usar.
+                val localDraft = if (recognizedDraft.paymentMethod == "card" && recognizedDraft.cardId == null && cards.size == 1) {
+                    recognizedDraft.copy(cardId = cards.single().id)
+                } else recognizedDraft
                 voiceProcessing = false
                 if (localDraft.amount <= 0.0) {
                     voiceError = "Entendi a frase, mas não consegui identificar o valor. Fale, por exemplo: ‘Gastei na padaria dois reais e cinquenta e dois centavos’."
@@ -403,7 +408,7 @@ fun HomeScreen(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "pt-BR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale o lançamento. Ex.: gastei na padaria R$ 2,52")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Ex.: comprei no cartao 1000 reais em 10 vezes")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         }
         runCatching { voiceTransactionLauncher.launch(intent) }
@@ -3416,19 +3421,31 @@ private fun DashboardScreen(
         }
     }
 
+    // Modo anual: projecao de todas as movimentacoes de janeiro a dezembro,
+    // incluindo datas futuras. O saldo real (totalBalance) permanece intacto.
+    val annualProjectedBalance = remember(currentYearTransactions) {
+        currentYearTransactions
+            .filter(::isCashFlowTransaction)
+            .sumOf { it.amount }
+    }
     val periodExpense = remember(periodTransactions) {
         periodTransactions
             .filter { it.amount < 0.0 && isCashFlowTransaction(it) }
             .sumOf { abs(it.amount) }
     }
 
-    // Entradas totais ja recebidas, independentemente do seletor Mensal/Anual.
-    // Recebimentos futuros (por exemplo, recorrencias) nao sao dinheiro disponivel hoje.
-    val accumulatedIncome = remember(transactions) {
+    // Mensal mantem as entradas efetivamente recebidas ate hoje.
+    // Anual mostra todas as entradas cadastradas no ano, inclusive as futuras.
+    // O saldo bancario continua independente e nao antecipa recebimentos futuros.
+    val accumulatedIncome = remember(transactions, dashboardAnnual, currentYear) {
         val today = LocalDate.now()
         transactions.asSequence()
             .filter { it.amount > 0.0 && isCashFlowTransaction(it) }
-            .filter { tx -> parseTxDate(tx.date)?.let { !it.isAfter(today) } == true }
+            .filter { tx ->
+                parseTxDate(tx.date)?.let { date ->
+                    if (dashboardAnnual) date.year == currentYear else !date.isAfter(today)
+                } == true
+            }
             .sumOf { it.amount }
     }
 
@@ -3610,7 +3627,7 @@ private fun DashboardScreen(
                     ) {
                         when (dashboardId) {
                             "CURRENT_VALUE" -> DashboardBalanceCard(
-                                value = currency.format(totalBalance),
+                                value = currency.format(if (dashboardAnnual) annualProjectedBalance else totalBalance),
                                 annual = dashboardAnnual,
                                 valuesVisible = dashboardValuesVisible && showVisibilityButton,
                                 showVisibilityButton = showVisibilityButton,
@@ -3626,7 +3643,7 @@ private fun DashboardScreen(
                             ) {
                                 if ("INCOME" in visibleMetricIds) {
                                     DashboardMetricCard(
-                                        Modifier.weight(1f), "Entradas totais", if (dashboardValuesVisible && showVisibilityButton) currency.format(accumulatedIncome) else "R$ ••••••",
+                                        Modifier.weight(1f), if (dashboardAnnual) "Entradas do ano" else "Entradas totais", if (dashboardValuesVisible && showVisibilityButton) currency.format(accumulatedIncome) else "R$ ••••••",
                                         Icons.Default.ArrowDownward, Color(0xFF178A3A),
                                         Color(0xFFE9F8EF)
                                     )

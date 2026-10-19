@@ -213,11 +213,11 @@ internal fun MonthlyTransactionsScreen(
     }
 
     val scopedAllTransactions = remember(
-        allTransactions,
+        transactions,
         transactionViewTab,
         quickCardId
     ) {
-        allTransactions.filter { tx ->
+        transactions.filter { tx ->
             when (transactionViewTab) {
                 // Compras no cartão ficam somente em Cartões/Fatura. Em Despesas
                 // entra apenas a saída real quando a fatura é paga.
@@ -351,11 +351,22 @@ internal fun MonthlyTransactionsScreen(
     val hasSearchQuery =
         searchQuery.isNotBlank()
 
+    // Um filtro aplicado deve buscar em todo o historico, e nao apenas no mes aberto.
+    // A navegacao mensal so limita a lista quando nao existe filtro ativo.
+    val hasNonDateFilter =
+        filters.source != SourceFilter.ALL ||
+            filters.type != TypeFilter.ALL ||
+            filters.amount != AmountFilter.ALL ||
+            filters.accountId != null ||
+            filters.categoryId != null ||
+            filters.cardId != null
+
     val consolidatedMode =
         hasPeriodFilter ||
             hasSpecificDateFilter ||
             showAllMode ||
-            hasSearchQuery
+            hasSearchQuery ||
+            hasNonDateFilter
 
     val normalizedSearch =
         remember(searchQuery) {
@@ -439,7 +450,14 @@ internal fun MonthlyTransactionsScreen(
         searchQuery
     ) {
         if (!hasSearchQuery) {
-            scopedTransactions
+            if (consolidatedMode) {
+                if (transactionViewTab == TransactionViewTab.EXPENSE && filters.categoryId != null) {
+                    scopedAllTransactions + transactions.filter { tx ->
+                        tx.source == "card_purchase" ||
+                            (tx.cardId != null && tx.source != "card_payment" && tx.installmentGroup != null)
+                    }.filterNot { cardTx -> scopedAllTransactions.any { it.id == cardTx.id } }
+                } else scopedAllTransactions
+            } else scopedTransactions
         } else {
             // Pesquisa global: quando há texto, procura em todos os meses disponíveis,
             // sem ficar presa ao mês atualmente selecionado no carrossel.

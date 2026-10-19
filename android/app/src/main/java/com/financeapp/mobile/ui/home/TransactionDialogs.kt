@@ -1,5 +1,7 @@
 package com.financeapp.mobile.ui.home
 
+import androidx.compose.material.icons.filled.Add
+
 import androidx.compose.ui.Alignment
 
 import androidx.compose.foundation.layout.*
@@ -108,6 +110,20 @@ internal fun TransactionDetailsDialog(
                         expanded = categoryMenu,
                         onDismissRequest = { categoryMenu = false }
                     ) {
+                        var categorySearch by remember(categoryMenu) { mutableStateOf("") }
+                        Row(modifier = Modifier.width(290.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = categorySearch,
+                                onValueChange = { categorySearch = it },
+                                placeholder = { Text("Buscar categoria") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { categoryMenu = false; showNewCategory = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "Nova categoria")
+                            }
+                        }
+
                         DropdownMenuItem(
                             text = { Text("Sem categoria") },
                             onClick = {
@@ -115,7 +131,7 @@ internal fun TransactionDetailsDialog(
                                 categoryMenu = false
                             }
                         )
-                        categories.forEach { item ->
+                        categories.filter { it.name.contains(categorySearch, ignoreCase = true) }.forEach { item ->
                             DropdownMenuItem(
                                 text = { Text(item.name) },
                                 onClick = {
@@ -124,16 +140,6 @@ internal fun TransactionDetailsDialog(
                                 }
                             )
                         }
-
-                        HorizontalDivider()
-
-                        DropdownMenuItem(
-                            text = { Text("+ Nova categoria") },
-                            onClick = {
-                                categoryMenu = false
-                                showNewCategory = true
-                            }
-                        )
                     }
                 }
 
@@ -337,6 +343,20 @@ internal fun EditTransactionDialog(
                         expanded = categoryMenu,
                         onDismissRequest = { categoryMenu = false }
                     ) {
+                        var categorySearch by remember(categoryMenu) { mutableStateOf("") }
+                        Row(modifier = Modifier.width(290.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = categorySearch,
+                                onValueChange = { categorySearch = it },
+                                placeholder = { Text("Buscar categoria") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { categoryMenu = false; showNewCategory = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "Nova categoria")
+                            }
+                        }
+
                         DropdownMenuItem(
                             text = { Text("Sem categoria") },
                             onClick = {
@@ -344,7 +364,7 @@ internal fun EditTransactionDialog(
                                 categoryMenu = false
                             }
                         )
-                        categories.forEach { category ->
+                        categories.filter { it.name.contains(categorySearch, ignoreCase = true) }.forEach { category ->
                             DropdownMenuItem(
                                 text = { Text(category.name) },
                                 onClick = {
@@ -353,14 +373,6 @@ internal fun EditTransactionDialog(
                                 }
                             )
                         }
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("+ Nova categoria") },
-                            onClick = {
-                                categoryMenu = false
-                                showNewCategory = true
-                            }
-                        )
                     }
                 }
 
@@ -927,6 +939,20 @@ internal fun ManualTransactionDialog(
                             categoryMenu = false
                         }
                     ) {
+                        var categorySearch by remember(categoryMenu) { mutableStateOf("") }
+                        Row(modifier = Modifier.width(290.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = categorySearch,
+                                onValueChange = { categorySearch = it },
+                                placeholder = { Text("Buscar categoria") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { categoryMenu = false; showNewCategory = true }) {
+                                Icon(Icons.Default.Add, contentDescription = "Nova categoria")
+                            }
+                        }
+
                         DropdownMenuItem(
                             text = {
                                 Text("Sem categoria")
@@ -938,7 +964,7 @@ internal fun ManualTransactionDialog(
                             }
                         )
 
-                        categories.forEach {
+                        categories.filter { it.name.contains(categorySearch, ignoreCase = true) }.forEach {
                                 category ->
                             DropdownMenuItem(
                                 text = {
@@ -951,20 +977,6 @@ internal fun ManualTransactionDialog(
                                 }
                             )
                         }
-
-                        HorizontalDivider()
-
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    "+ Nova categoria"
-                                )
-                            },
-                            onClick = {
-                                categoryMenu = false
-                                showNewCategory = true
-                            }
-                        )
                     }
                 }
 
