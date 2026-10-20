@@ -67,6 +67,7 @@ internal fun TransactionAttachmentsDialog(
     var error by remember(tx.id) { mutableStateOf<String?>(null) }
     var pendingSave by remember { mutableStateOf<TransactionAttachmentDto?>(null) }
     var addMenuExpanded by remember { mutableStateOf(false) }
+    var attachmentKind by remember { mutableStateOf("DOC") }
 
     val scannerOptions = remember {
         GmsDocumentScannerOptions.Builder()
@@ -100,12 +101,12 @@ internal fun TransactionAttachmentsDialog(
                 val resolver = context.contentResolver
                 val mime = resolver.getType(uri) ?: "application/octet-stream"
                 require(mime == "application/pdf" || mime.startsWith("image/")) { "Selecione uma imagem ou PDF." }
-                var name = "comprovante"
+                var name = "anexo"
                 resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                     if (c.moveToFirst()) name = c.getString(0) ?: name
                 }
                 val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Não foi possível ler o arquivo.")
-                onUpload(tx.id, name, mime, bytes)
+                onUpload(tx.id, "[${attachmentKind}] $name", mime, bytes)
             }.onSuccess { refresh() }
              .onFailure { error = attachmentFailureMessage(it, "Não foi possível anexar o comprovante."); loading = false }
         }
@@ -126,13 +127,14 @@ internal fun TransactionAttachmentsDialog(
                     ?: error("Não foi possível ler o documento digitalizado.")
                 require(bytes.isNotEmpty()) { "O documento digitalizado está vazio." }
                 val fileName = "comprovante_digitalizado_${System.currentTimeMillis()}.pdf"
-                onUpload(tx.id, fileName, "application/pdf", bytes)
+                onUpload(tx.id, "[${attachmentKind}] $fileName", "application/pdf", bytes)
             }.onSuccess { refresh() }
              .onFailure { error = attachmentFailureMessage(it, "Não foi possível anexar o documento digitalizado."); loading = false }
         }
     }
 
     fun startDocumentScan() {
+        attachmentKind = "DOC"
         addMenuExpanded = false
         val activity = context.findActivity()
         if (activity == null) {
@@ -255,12 +257,12 @@ internal fun TransactionAttachmentsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Comprovantes • ${tx.description}") },
+        title = { Text("Documentos e comprovantes • ${tx.description}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (loading && rows.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (!loading && rows.isEmpty()) Text("Nenhum comprovante anexado.")
+                if (!loading && rows.isEmpty()) Text("Nenhum documento ou comprovante anexado.")
                 LazyColumn(
                     modifier = Modifier.heightIn(max = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -282,7 +284,8 @@ internal fun TransactionAttachmentsDialog(
                                 ) {
                                     Icon(if (row.contentType == "application/pdf") Icons.Default.PictureAsPdf else Icons.Default.Image, null)
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(row.originalName, style = MaterialTheme.typography.bodyMedium)
+                                        Text(row.originalName.removePrefix("[DOC] ").removePrefix("[REC] "), style = MaterialTheme.typography.bodyMedium)
+                                        Text(if (row.originalName.startsWith("[DOC] ")) "Documento da despesa" else "Comprovante de pagamento", style = MaterialTheme.typography.bodySmall)
                                         Text(
                                             if (row.sizeBytes < 1048576) "${row.sizeBytes / 1024} KB" else "%.1f MB".format(row.sizeBytes / 1048576.0),
                                             style = MaterialTheme.typography.bodySmall
@@ -325,6 +328,8 @@ internal fun TransactionAttachmentsDialog(
                     expanded = addMenuExpanded,
                     onDismissRequest = { addMenuExpanded = false }
                 ) {
+                    DropdownMenuItem(text = { Text("Anexar documento da despesa") }, onClick = { attachmentKind = "DOC"; addMenuExpanded = false; picker.launch(arrayOf("image/*", "application/pdf")) })
+                    DropdownMenuItem(text = { Text("Anexar comprovante de pagamento") }, onClick = { attachmentKind = "REC"; addMenuExpanded = false; picker.launch(arrayOf("image/*", "application/pdf")) })
                     DropdownMenuItem(
                         text = { Text("Digitalizar documento") },
                         leadingIcon = { Icon(Icons.Default.DocumentScanner, contentDescription = null) },
